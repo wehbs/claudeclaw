@@ -391,11 +391,24 @@ function makeStreamCallback(
   const { intervalMs = 500, verbose = false } = options;
   let textAcc = "";
   const toolLines: string[] = [];
+  const toolNames: string[] = [];
+  const startedAt = Date.now();
   let lastSentAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let streamMsgId: number | null = null;
   let initPromise: Promise<void> | null = null;
   let finalized = false;
+
+  // Non-verbose status-indicator render: "⏳ Working… (42s, 3 tools)\n  → Bash\n …"
+  // Keeps users informed while they wait, instead of just Telegram's typing indicator.
+  const renderStatus = (): string => {
+    const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+    if (toolNames.length === 0) return `⏳ Thinking… (${elapsed}s)`;
+    const recent = toolNames.slice(-3);
+    const more = toolNames.length > 3 ? `\n…and ${toolNames.length - 3} earlier` : "";
+    const plural = toolNames.length === 1 ? "" : "s";
+    return `⏳ Working… (${elapsed}s, ${toolNames.length} tool${plural})\n${recent.map((t) => `  → ${t}`).join("\n")}${more}`;
+  };
 
   const getDisplay = () => {
     const MAX_TOOL_LINES = 8;
@@ -417,14 +430,7 @@ function makeStreamCallback(
 
   const editStream = () => {
     if (!streamMsgId || finalized) return;
-    let display: string;
-    if (verbose) {
-      display = getDisplay();
-    } else {
-      // Keep last N lines of text for streaming preview
-      const lines = textAcc.split("\n");
-      display = lines.length > 30 ? `[...]\n${lines.slice(-30).join("\n")}` : textAcc;
-    }
+    const display = verbose ? getDisplay() : renderStatus();
     if (!display) return;
     callApi(token, "editMessageText", {
       chat_id: chatId,
@@ -434,7 +440,7 @@ function makeStreamCallback(
   };
 
   const flush = async () => {
-    const display = verbose ? getDisplay() : textAcc;
+    const display = verbose ? getDisplay() : renderStatus();
     if (!display) return;
     lastSentAt = Date.now();
 
@@ -444,7 +450,7 @@ function makeStreamCallback(
           const res = await callApi<{ ok: boolean; result: { message_id: number } }>(
             token, "sendMessage", {
               chat_id: chatId,
-              text: "⏳",
+              text: "⏳ Thinking…",
               ...(threadId ? { message_thread_id: threadId } : {}),
             }
           );
@@ -461,8 +467,17 @@ function makeStreamCallback(
     }
   };
 
+  // Kick off the placeholder immediately in non-verbose mode so the user sees
+  // "⏳ Thinking…" right away, even before any tool fires. Verbose mode waits for
+  // the first chunk/tool event so the message starts populated.
+  if (!verbose) void flush();
+
   const onChunk = (text: string) => {
     textAcc += text;
+    // In non-verbose status-indicator mode, chunks don't change the display
+    // (the final response replaces the placeholder via editMessageText at the
+    // call site), so we skip the API round-trip and let tool events drive updates.
+    if (!verbose) return;
     const now = Date.now();
     if (now - lastSentAt >= intervalMs) {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -473,8 +488,15 @@ function makeStreamCallback(
   };
 
   const onToolEvent = (line: string) => {
-    if (!verbose) return;
-    toolLines.push(line);
+    if (verbose) {
+      toolLines.push(line);
+    } else {
+      // Extract the tool name from upstream's "● Name(args)" format. Ignore tool
+      // result lines ("  ⎿  [Name] …") since we only count outgoing calls.
+      const m = line.match(/^●\s+(\S+?)(?:\(|$)/);
+      if (m) toolNames.push(m[1]);
+      else return; // result line — nothing to update
+    }
     // Use same throttle logic as onChunk to avoid spamming the API
     const now = Date.now();
     if (now - lastSentAt >= intervalMs) {
@@ -489,7 +511,7 @@ function makeStreamCallback(
     if (timer) { clearTimeout(timer); timer = null; }
     if (initPromise) await initPromise;
     finalized = true;
-    return { msgId: streamMsgId, hadToolLines: toolLines.length > 0 };
+    return { msgId: streamMsgId, hadToolLines: toolLines.length > 0 || toolNames.length > 0 };
   };
 
   return { onChunk, onToolEvent, waitForStreamMsg };

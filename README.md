@@ -29,6 +29,7 @@
 > **Fork of [moazbuilds/claudeclaw](https://github.com/moazbuilds/claudeclaw)** with a few extra quality-of-life patches. PRs and issues welcome — anything stable will be sent upstream.
 >
 > **What's different from upstream:**
+> - **"Working… (Xs, N tools)" status indicator.** While the bot processes your message, you see a live status counter — elapsed time and the names of tools being called (`→ Bash`, `→ Read`, …) — instead of Telegram's plain typing indicator. Replaces upstream's inline streaming preview in non-verbose mode. Verbose mode (`/verbose`) still shows upstream's inline tool lines + response text.
 > - **Per-job Telegram routing.** Cron jobs can declare `chat: <id>` and `thread: <topic_id>` in frontmatter to deliver output to a specific chat or forum topic instead of the default DM list. See [`commands/jobs.md`](commands/jobs.md).
 > - **listenChats media fix.** Messages with no text (images, voice, stickers) in `listenChats` whitelisted chats now trigger the bot. Previously these were dropped before the whitelist check ran.
 >
