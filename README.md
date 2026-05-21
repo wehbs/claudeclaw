@@ -26,6 +26,12 @@
 
 <p align="center"><b>A lightweight, open-source OpenClaw version built into your Claude Code.</b></p>
 
+> **Fork notice (wehbs):** This is a personal fork of [moazbuilds/claudeclaw](https://github.com/moazbuilds/claudeclaw) maintained to carry patches that aren't yet upstream. Track upstream via the `upstream` remote; pull updates with `git fetch upstream && git merge upstream/master`.
+>
+> **Patches on top of upstream:**
+> - **Per-job Telegram routing.** Cron jobs can declare `chat: <id>` and `thread: <topic_id>` in frontmatter to deliver output to a specific chat / forum topic instead of the default DM list. See `commands/jobs.md`.
+> - **listenChats media fix.** Messages with no text (images, voice, stickers) in `listenChats` whitelisted chats now trigger the bot. Previously the early `if (!text) return null` dropped media-only messages before the whitelist check ran.
+
 ClaudeClaw turns your Claude Code into a personal assistant that never sleeps. It runs as a background daemon, executing tasks on a schedule, responding to messages on Telegram, Discord, and Slack, transcribing voice commands, and integrating with any service you need.
 
 > Note: Please don't use ClaudeClaw for hacking any bank system or doing any illegal activities. Thank you.
