@@ -388,7 +388,7 @@ export async function start(args: string[] = []) {
   const daemonStartedAt = Date.now();
 
   // --- Telegram ---
-  let telegramSend: ((chatId: number, text: string) => Promise<void>) | null = null;
+  let telegramSend: ((chatId: number, text: string, threadId?: number) => Promise<void>) | null = null;
   let telegramToken = "";
   let telegramReceiveEnabled = true;
 
@@ -396,7 +396,7 @@ export async function start(args: string[] = []) {
     if (token && token !== telegramToken) {
       const { startPolling, sendMessage } = await import("./telegram");
       if (receiveEnabled) startPolling(debugFlag);
-      telegramSend = (chatId, text) => sendMessage(token, chatId, text);
+      telegramSend = (chatId, text, threadId) => sendMessage(token, chatId, text, threadId);
       telegramToken = token;
       telegramReceiveEnabled = receiveEnabled;
       console.log(`[${ts()}] Telegram: enabled${receiveEnabled ? "" : " (send-only)"}`);
@@ -478,7 +478,7 @@ export async function start(args: string[] = []) {
     pluginManager.setChannelSenders({
       telegram: {
         sendMessageTelegram: telegramSend
-          ? (chatId: number, text: string) => telegramSend!(chatId, text)
+          ? (chatId: number, text: string, threadId?: number) => telegramSend!(chatId, text, threadId)
           : () => Promise.resolve(),
       },
       discord: {
@@ -624,11 +624,22 @@ export async function start(args: string[] = []) {
     }
   }
 
-  function forwardToTelegram(label: string, result: { exitCode: number; stdout: string; stderr: string }) {
-    if (!telegramSend || currentSettings.telegram.allowedUserIds.length === 0) return;
+  function forwardToTelegram(
+    label: string,
+    result: { exitCode: number; stdout: string; stderr: string },
+    target?: { chat?: number; thread?: number }
+  ) {
+    if (!telegramSend) return;
     const text = result.exitCode === 0
       ? `${label ? `[${label}]\n` : ""}${result.stdout || "(empty)"}`
       : `${label ? `[${label}] ` : ""}error (exit ${result.exitCode}): ${extractErrorDetail(result) || "Unknown"}`;
+    if (target?.chat) {
+      telegramSend(target.chat, text, target.thread).catch((err) =>
+        console.error(`[Telegram] Failed to forward to chat ${target.chat}${target.thread ? `/thread ${target.thread}` : ""}: ${err}`)
+      );
+      return;
+    }
+    if (currentSettings.telegram.allowedUserIds.length === 0) return;
     for (const userId of currentSettings.telegram.allowedUserIds) {
       telegramSend(userId, text).catch((err) =>
         console.error(`[Telegram] Failed to forward to ${userId}: ${err}`)
@@ -903,7 +914,7 @@ export async function start(args: string[] = []) {
             }
             if (job.notify === false) return;
             if (job.notify === "error" && r.exitCode === 0) return;
-            forwardToTelegram(job.name, r);
+            forwardToTelegram(job.name, r, job.chat ? { chat: job.chat, thread: job.thread } : undefined);
             forwardToDiscord(job.name, r);
           })
           .finally(async () => {

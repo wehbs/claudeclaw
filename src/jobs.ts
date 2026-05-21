@@ -23,6 +23,10 @@ export interface Job {
   retry?: number;
   /** Seconds to wait between retry attempts. Defaults to 300 (5 min). */
   retryDelay?: number;
+  /** Telegram chat ID to deliver job output to. When set, overrides the default DM-to-allowedUserIds behavior. */
+  chat?: number;
+  /** Telegram forum topic (message_thread_id) within `chat` to deliver job output to. Requires `chat`. */
+  thread?: number;
 }
 
 function parseFrontmatterValue(raw: string): string {
@@ -96,7 +100,15 @@ function parseJobFile(name: string, content: string): Job | null {
   const retryDelayLine = lines.find((l) => l.startsWith("retry_delay:"));
   const retryDelay = retryDelayLine ? parseInt(parseFrontmatterValue(retryDelayLine.replace("retry_delay:", "")), 10) || undefined : undefined;
 
-  return { name, schedule, prompt, recurring, notify, model, timeoutSeconds, agent, label, enabled, retry, retryDelay };
+  const chatLine = lines.find((l) => l.startsWith("chat:"));
+  const chatParsed = chatLine ? parseInt(parseFrontmatterValue(chatLine.replace("chat:", "")), 10) : NaN;
+  const chat = Number.isFinite(chatParsed) ? chatParsed : undefined;
+
+  const threadLine = lines.find((l) => l.startsWith("thread:"));
+  const threadParsed = threadLine ? parseInt(parseFrontmatterValue(threadLine.replace("thread:", "")), 10) : NaN;
+  const thread = Number.isFinite(threadParsed) ? threadParsed : undefined;
+
+  return { name, schedule, prompt, recurring, notify, model, timeoutSeconds, agent, label, enabled, retry, retryDelay, chat, thread };
 }
 
 export async function loadJobs(): Promise<Job[]> {

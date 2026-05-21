@@ -118,6 +118,10 @@ Legacy compatibility: `daily` is still accepted in existing job files.
 
 Logs are always written to `.claude/claudeclaw/logs/` regardless of the `notify` setting.
 
+**`chat`** (optional, Telegram): Override the default DM-to-`allowedUserIds` behavior and deliver output to a specific Telegram chat ID instead. Useful for routing job output to a group or supergroup. Example: `chat: -1003980788158`.
+
+**`thread`** (optional, Telegram): When `chat` points to a supergroup with forum topics, route the message to a specific topic (`message_thread_id`). Ignored without `chat`. Example: `thread: 3`.
+
 | Expression       | Meaning                  |
 |------------------|--------------------------|
 | `* * * * *`      | Every minute             |

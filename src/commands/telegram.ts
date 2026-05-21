@@ -684,6 +684,13 @@ let botId: number | null = null;
 
 function groupTriggerReason(message: TelegramMessage): string | null {
   if (botId && message.reply_to_message?.from?.id === botId) return "reply_to_bot";
+
+  // listenChats is an unconditional opt-in: whitelisted chats process EVERY message,
+  // including media-only posts (images, voice, documents) that have no text caption.
+  // Authorization still gates further via allowedUserIds downstream.
+  const { telegram } = getSettings();
+  if (telegram.listenChats?.includes(message.chat.id)) return "listen_chat";
+
   const { text, entities } = getMessageTextAndEntities(message);
   if (!text) return null;
   const lowerText = text.toLowerCase();
@@ -701,9 +708,6 @@ function groupTriggerReason(message: TelegramMessage): string | null {
       if (botUsername && value.toLowerCase().endsWith(`@${botUsername.toLowerCase()}`)) return "scoped_command_matches_bot";
     }
   }
-
-  const { telegram } = getSettings();
-  if (telegram.listenChats?.includes(message.chat.id)) return "listen_chat";
 
   return null;
 }
