@@ -1600,7 +1600,15 @@ async function registerBotCommands(token: string): Promise<void> {
       { command: "fork", description: "🍴 Run parallel task" },
       { command: "kill", description: "⛔ Stop current agent" },
     ];
+    // Telegram caps setMyCommands at 100 commands AND the combined size of all
+    // descriptions (~4KB) — exceeding either returns BOT_COMMANDS_TOO_MUCH and
+    // rejects the whole batch. So cap each description short and stop adding once
+    // the aggregate budget is hit, rather than slicing to the 256 per-field max.
+    const DESC_CAP = 100;
+    const TOTAL_DESC_BUDGET = 3800;
+    let totalDescLen = commands.reduce((sum, c) => sum + c.description.length, 0);
     for (const skill of skills) {
+      if (commands.length >= 100) break;
       // Telegram commands: 1-32 chars, lowercase a-z, 0-9, underscores only
       const cmd = skill.name
         .toLowerCase()
@@ -1609,12 +1617,13 @@ async function registerBotCommands(token: string): Promise<void> {
         .slice(0, 32);
       if (!cmd || cmd === "start" || cmd === "reset") continue;
       if (cmd.length > 30) continue;
-      const desc = skill.description.length >= 3
-        ? skill.description.slice(0, 256)
-        : `Run ${skill.name} skill`;
+      const desc = (skill.description.length >= 3
+        ? skill.description
+        : `Run ${skill.name} skill`).slice(0, DESC_CAP);
+      if (totalDescLen + desc.length > TOTAL_DESC_BUDGET) continue;
+      totalDescLen += desc.length;
       commands.push({ command: cmd, description: desc });
     }
-    if (commands.length > 100) commands.length = 100;
     try {
       await callApi(token, "setMyCommands", { commands });
       console.log(`  Commands registered: ${commands.length} (${commands.map((c) => "/" + c.command).join(", ")})`);

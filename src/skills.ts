@@ -81,17 +81,23 @@ async function collectSkillsFromDir(
   }
 }
 
+// Strip a single layer of surrounding quotes that some SKILL.md frontmatter wrap
+// their description in (e.g. description: "Foo." → captured as "Foo." with quotes).
+function unquote(s: string): string {
+  return s.replace(/^["']|["']$/g, "").trim();
+}
+
 function extractDescription(content: string): string {
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
   if (fmMatch) {
     const fm = fmMatch[1];
     const descMatch = fm.match(/^description:\s*>?\s*\n?([\s\S]*?)(?=\n\w|\n---|\n$)/m);
     if (descMatch) {
-      const raw = descMatch[1].replace(/\n\s*/g, " ").trim();
+      const raw = unquote(descMatch[1].replace(/\n\s*/g, " ").trim());
       if (raw) return raw.slice(0, 256);
     }
     const singleMatch = fm.match(/^description:\s*["']?(.+?)["']?\s*$/m);
-    if (singleMatch) return singleMatch[1].trim().slice(0, 256);
+    if (singleMatch) return unquote(singleMatch[1].trim()).slice(0, 256);
   }
 
   for (const line of content.split("\n")) {
