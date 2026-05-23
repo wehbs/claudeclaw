@@ -253,6 +253,11 @@ const threadQueues = new Map<string, Promise<unknown>>();
 // Counter of concurrently-running main-queue sessions (per-thread queues run in parallel)
 let mainRunCount = 0;
 
+// Per-key in-flight counter: tracks which thread/session keys currently have a
+// run executing. The per-thread queue serializes same-key runs, so each key is
+// 0 or 1 in practice, but a counter keeps it correct under any racing.
+const runningKeys = new Map<string, number>();
+
 /** Current number of concurrently-running main-queue sessions. */
 export function getMainRunCount(): number {
   return mainRunCount;
@@ -296,6 +301,11 @@ export function killActive(): boolean {
 /** True while any main-queue agent is processing a task (excludes fork). */
 export function isMainBusy(): boolean {
   return mainRunCount > 0;
+}
+
+/** True while a run for this specific thread/session key is executing (excludes fork). */
+export function isThreadBusy(threadId: string): boolean {
+  return (runningKeys.get(threadId) ?? 0) > 0;
 }
 
 function extractRateLimitMessage(stdout: string, stderr: string): string | null {
@@ -1031,6 +1041,7 @@ async function execClaude(
   onToolEvent?: (line: string) => void
 ): Promise<RunResult> {
   mainRunCount++;
+  if (threadId) runningKeys.set(threadId, (runningKeys.get(threadId) ?? 0) + 1);
   persistRunCount();
   try {
   await mkdir(LOGS_DIR, { recursive: true });
@@ -1426,6 +1437,11 @@ async function execClaude(
   return result;
   } finally {
     mainRunCount--;
+    if (threadId) {
+      const n = (runningKeys.get(threadId) ?? 1) - 1;
+      if (n > 0) runningKeys.set(threadId, n);
+      else runningKeys.delete(threadId);
+    }
     persistRunCount();
   }
 }
