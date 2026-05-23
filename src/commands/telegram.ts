@@ -376,6 +376,24 @@ const MODEL_HAIKU = "claude-haiku-4-5-20251001";
 const MODEL_SONNET = "claude-sonnet-4-6";
 const MODEL_OPUS = "claude-opus-4-7";
 
+// Emoji per tool for the non-verbose status indicator. Unknown tools fall back to 🔧.
+const TOOL_EMOJI: Record<string, string> = {
+  Read: "📖", Write: "📝", Edit: "✏️", Bash: "💻",
+  Grep: "🔍", Glob: "🗂️", WebSearch: "🌐", WebFetch: "🌐",
+  Task: "🤖", TodoWrite: "✅",
+};
+
+// Parse a non-verbose tool-call line ("● Bash(git status)") into emoji + name + detail.
+// Returns null for result lines ("  ⎿  …") or anything unrecognized, which the caller skips.
+function parseToolCallLine(line: string): { emoji: string; name: string; detail: string } | null {
+  const m = line.match(/^●\s+(\w+)(?:\((.*)\))?\s*$/);
+  if (!m) return null;
+  const name = m[1];
+  let detail = (m[2] ?? "").trim();
+  if (detail === "...") detail = ""; // generic placeholder from formatToolCallSummary — no real info
+  return { emoji: TOOL_EMOJI[name] ?? "🔧", name, detail };
+}
+
 /**
  * Build a streaming callback using editMessageText.
  * On first chunk: send a placeholder message to get message_id.
@@ -391,23 +409,22 @@ function makeStreamCallback(
   const { intervalMs = 500, verbose = false } = options;
   let textAcc = "";
   const toolLines: string[] = [];
-  const toolNames: string[] = [];
-  const startedAt = Date.now();
+  const tools: { emoji: string; name: string; detail: string }[] = [];
   let lastSentAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let streamMsgId: number | null = null;
   let initPromise: Promise<void> | null = null;
   let finalized = false;
 
-  // Non-verbose status-indicator render: "⏳ Working… (42s, 3 tools)\n  → Bash\n …"
-  // Keeps users informed while they wait, instead of just Telegram's typing indicator.
+  // Non-verbose status-indicator render: "⏳ Working…\n💻 Bash · git status\n📖 Read · …"
+  // Updates as tool calls arrive (no live timer — see waitForStreamMsg). Keeps users
+  // informed while they wait, instead of just Telegram's typing indicator.
   const renderStatus = (): string => {
-    const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-    if (toolNames.length === 0) return `⏳ Thinking… (${elapsed}s)`;
-    const recent = toolNames.slice(-3);
-    const more = toolNames.length > 3 ? `\n…and ${toolNames.length - 3} earlier` : "";
-    const plural = toolNames.length === 1 ? "" : "s";
-    return `⏳ Working… (${elapsed}s, ${toolNames.length} tool${plural})\n${recent.map((t) => `  → ${t}`).join("\n")}${more}`;
+    if (tools.length === 0) return "⏳ Thinking…";
+    const recent = tools.slice(-4);
+    const more = tools.length > 4 ? `\n…and ${tools.length - 4} earlier` : "";
+    const lines = recent.map((t) => `${t.emoji} ${t.name}${t.detail ? ` · ${t.detail}` : ""}`);
+    return `⏳ Working…\n${lines.join("\n")}${more}`;
   };
 
   const getDisplay = () => {
@@ -491,10 +508,10 @@ function makeStreamCallback(
     if (verbose) {
       toolLines.push(line);
     } else {
-      // Extract the tool name from upstream's "● Name(args)" format. Ignore tool
-      // result lines ("  ⎿  [Name] …") since we only count outgoing calls.
-      const m = line.match(/^●\s+(\S+?)(?:\(|$)/);
-      if (m) toolNames.push(m[1]);
+      // Parse upstream's "● Name(args)" format into emoji + name + detail. Ignore
+      // tool result lines ("  ⎿  [Name] …") since we only show outgoing calls.
+      const parsed = parseToolCallLine(line);
+      if (parsed) tools.push(parsed);
       else return; // result line — nothing to update
     }
     // Use same throttle logic as onChunk to avoid spamming the API
@@ -511,7 +528,7 @@ function makeStreamCallback(
     if (timer) { clearTimeout(timer); timer = null; }
     if (initPromise) await initPromise;
     finalized = true;
-    return { msgId: streamMsgId, hadToolLines: toolLines.length > 0 || toolNames.length > 0 };
+    return { msgId: streamMsgId, hadToolLines: toolLines.length > 0 || tools.length > 0 };
   };
 
   return { onChunk, onToolEvent, waitForStreamMsg };

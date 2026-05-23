@@ -614,6 +614,7 @@ function formatToolCallSummary(name: string, input: Record<string, unknown>): st
     case "Glob":    return `Glob(${s(input.pattern)})`;
     case "WebSearch": return `WebSearch(${s(input.query)})`;
     case "WebFetch":  return `WebFetch(${s(input.url, 60)})`;
+    case "Task":    return `Task(${s(input.description ?? input.subagent_type)})`;
     default:        return `${name}(...)`;
   }
 }
