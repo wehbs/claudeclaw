@@ -724,7 +724,7 @@ export async function start(args: string[] = []) {
             .join("\n\n");
           if (!mergedPrompt) return null;
           const clock = buildClockPromptPrefix(new Date(), currentSettings.timezoneOffsetMinutes);
-          return run("heartbeat", `${clock}\n${mergedPrompt}`);
+          return run("heartbeat", `${clock}\n${mergedPrompt}`, undefined, undefined, undefined, undefined, undefined, undefined, undefined, currentSettings.heartbeat.effort ?? null);
         })
         .then((r) => {
           if (!r) return;
@@ -886,7 +886,10 @@ export async function start(args: string[] = []) {
               job.model,
               timeoutMs,
               job.agent,
-              "job"
+              "job",
+              undefined,
+              undefined,
+              job.effort ?? null
             );
           })
           .then(async (r) => {

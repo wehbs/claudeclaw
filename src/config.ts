@@ -97,12 +97,26 @@ export interface HeartbeatExcludeWindow {
   end: string;
 }
 
+/** Reasoning effort levels accepted by `claude --effort`. */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** Coerce an arbitrary value to a valid EffortLevel, or null if it isn't one. */
+export function parseEffort(value: unknown): EffortLevel | null {
+  if (typeof value === "string" && (EFFORT_LEVELS as string[]).includes(value)) {
+    return value as EffortLevel;
+  }
+  return null;
+}
+
 export interface HeartbeatConfig {
   enabled: boolean;
   interval: number;
   prompt: string;
   excludeWindows: HeartbeatExcludeWindow[];
   forwardToTelegram: boolean;
+  /** Reasoning effort for heartbeat runs. Unset = CLI default. */
+  effort?: EffortLevel;
 }
 
 export interface TelegramConfig {
@@ -335,6 +349,7 @@ function parseSettings(
       prompt: raw.heartbeat?.prompt ?? "",
       excludeWindows: parseExcludeWindows(raw.heartbeat?.excludeWindows),
       forwardToTelegram: raw.heartbeat?.forwardToTelegram ?? false,
+      ...(parseEffort(raw.heartbeat?.effort) ? { effort: parseEffort(raw.heartbeat?.effort)! } : {}),
     },
     telegram: {
       token: process.env.TELEGRAM_TOKEN?.trim() || (typeof raw.telegram?.token === "string" ? raw.telegram.token.trim() : ""),

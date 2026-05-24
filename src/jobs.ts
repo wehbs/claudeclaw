@@ -1,6 +1,6 @@
 import { readdir } from "fs/promises";
 import { join } from "path";
-import { getJobsDir, getAgentsDir } from "./config";
+import { getJobsDir, getAgentsDir, parseEffort, type EffortLevel } from "./config";
 
 export interface Job {
   /** Scheduler key. For standalone jobs this is the file stem. For agent-scoped jobs this is "agent/label". */
@@ -11,6 +11,8 @@ export interface Job {
   notify: true | false | "error";
   /** When set, overrides the global model for this job. Useful for routing cheap tasks to haiku. */
   model?: string;
+  /** When set, overrides the reasoning effort for this job (low/medium/high/xhigh/max). */
+  effort?: EffortLevel;
   /** When set, overrides the global session timeout for this job (in seconds). */
   timeoutSeconds?: number;
   /** If set, this job is scoped to an agent. */
@@ -72,6 +74,9 @@ function parseJobFile(name: string, content: string): Job | null {
   const modelLine = lines.find((l) => l.startsWith("model:"));
   const model = modelLine ? parseFrontmatterValue(modelLine.replace("model:", "")) || undefined : undefined;
 
+  const effortLine = lines.find((l) => l.startsWith("effort:"));
+  const effort = effortLine ? parseEffort(parseFrontmatterValue(effortLine.replace("effort:", "")).toLowerCase()) ?? undefined : undefined;
+
   const timeoutLine = lines.find((l) => l.startsWith("timeout:"));
   const timeoutRaw = timeoutLine ? parseFrontmatterValue(timeoutLine.replace("timeout:", "")) : "";
   const timeoutParsed = timeoutRaw ? parseInt(timeoutRaw, 10) : NaN;
@@ -108,7 +113,7 @@ function parseJobFile(name: string, content: string): Job | null {
   const threadParsed = threadLine ? parseInt(parseFrontmatterValue(threadLine.replace("thread:", "")), 10) : NaN;
   const thread = Number.isFinite(threadParsed) ? threadParsed : undefined;
 
-  return { name, schedule, prompt, recurring, notify, model, timeoutSeconds, agent, label, enabled, retry, retryDelay, chat, thread };
+  return { name, schedule, prompt, recurring, notify, model, effort, timeoutSeconds, agent, label, enabled, retry, retryDelay, chat, thread };
 }
 
 export async function loadJobs(): Promise<Job[]> {

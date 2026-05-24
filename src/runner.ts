@@ -24,7 +24,7 @@ import {
   incrementThreadTurn,
   markThreadCompactWarned,
 } from "./sessionManager";
-import { getSettings, DEFAULT_SESSION_TIMEOUT_MS, type ModelConfig, type SecurityConfig } from "./config";
+import { getSettings, DEFAULT_SESSION_TIMEOUT_MS, EFFORT_LEVELS, parseEffort, type ModelConfig, type SecurityConfig, type EffortLevel } from "./config";
 import { buildClockPromptPrefix } from "./timezone";
 import { selectModel } from "./model-router";
 import { recordResult, abortReason, clearSession, startSession } from "./watchdog";
@@ -33,6 +33,7 @@ import { getPluginManager, type EventContext } from "./plugins";
 const LOGS_DIR = join(process.cwd(), ".claude/claudeclaw/logs");
 const ACTIVE_RUNS_FILE = join(process.cwd(), ".claude/claudeclaw/active-runs");
 const PERMISSION_MODE_FILE = join(process.cwd(), ".claude/claudeclaw/permission-mode.json");
+const EFFORT_FILE = join(process.cwd(), ".claude/claudeclaw/effort.json");
 // Resolve prompts relative to the claudeclaw installation, not the project dir
 const PROMPTS_DIR = join(import.meta.dir, "..", "prompts");
 const HEARTBEAT_PROMPT_FILE = join(PROMPTS_DIR, "heartbeat", "HEARTBEAT.md");
@@ -876,7 +877,47 @@ export function setPermissionMode(mode: PermissionMode): void {
   }
 }
 
-function buildSecurityArgs(security: SecurityConfig): string[] {
+// Per-context reasoning effort for the spawned `claude` session, persisted to a
+// map keyed by session: each Telegram thread, the main session, etc. keep their
+// own level independently. null/absent = leave unset (CLI default). Jobs and the
+// heartbeat carry their own effort in config and never read this map.
+export const MAIN_EFFORT_KEY = "main";
+
+let cachedEfforts: Record<string, EffortLevel> | null = null;
+
+function loadEfforts(): Record<string, EffortLevel> {
+  if (cachedEfforts) return cachedEfforts;
+  const out: Record<string, EffortLevel> = {};
+  try {
+    const raw = JSON.parse(readFileSync(EFFORT_FILE, "utf8")) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(raw)) {
+      const level = parseEffort(value);
+      if (level) out[key] = level;
+    }
+  } catch {}
+  cachedEfforts = out;
+  return out;
+}
+
+/** Effort for a session key (e.g. a Telegram thread or MAIN_EFFORT_KEY). null = default. */
+export function getEffort(key: string): EffortLevel | null {
+  return loadEfforts()[key] ?? null;
+}
+
+/** Set or (with null) clear the effort for a session key, persisting the change. */
+export function setEffort(key: string, level: EffortLevel | null): void {
+  const efforts = loadEfforts();
+  if (level) efforts[key] = level;
+  else delete efforts[key];
+  try {
+    mkdirSync(dirname(EFFORT_FILE), { recursive: true });
+    writeFileSync(EFFORT_FILE, `${JSON.stringify(efforts, null, 2)}\n`);
+  } catch (err) {
+    console.error("[runner] Failed to persist effort:", err);
+  }
+}
+
+function buildSecurityArgs(security: SecurityConfig, effort?: EffortLevel | null): string[] {
   const permissionMode = getPermissionMode();
   const args: string[] = permissionMode === "bypassPermissions"
     ? ["--dangerously-skip-permissions"]
@@ -903,6 +944,10 @@ function buildSecurityArgs(security: SecurityConfig): string[] {
   if (security.disallowedTools.length > 0) {
     args.push("--disallowedTools", security.disallowedTools.join(" "));
   }
+
+  // Reasoning effort is resolved per-call by the caller and threaded in here so
+  // every exec path (they all spread buildSecurityArgs) emits the right flag.
+  if (effort) args.push("--effort", effort);
 
   return args;
 }
@@ -980,7 +1025,7 @@ export async function compactCurrentSession(agentName?: string): Promise<{ succe
   if (!existing) return { success: false, message: "No active session to compact." };
 
   const settings = getSettings();
-  const securityArgs = buildSecurityArgs(settings.security);
+  const securityArgs = buildSecurityArgs(settings.security, getEffort(MAIN_EFFORT_KEY));
   const baseEnv = cleanSpawnEnv();
   const timeoutMs = settings.sessionTimeoutMs;
 
@@ -1010,7 +1055,7 @@ export async function compactCurrentThreadSession(
   if (!existing) return { success: false, message: "No active session to compact." };
 
   const settings = getSettings();
-  const securityArgs = buildSecurityArgs(settings.security);
+  const securityArgs = buildSecurityArgs(settings.security, getEffort(threadId));
   const baseEnv = cleanSpawnEnv();
   const timeoutMs = settings.sessionTimeoutMs;
 
@@ -1039,7 +1084,8 @@ async function execClaude(
   agentName?: string,
   timeoutCategory?: string,
   onChunk?: (text: string) => void,
-  onToolEvent?: (line: string) => void
+  onToolEvent?: (line: string) => void,
+  effort?: EffortLevel | null
 ): Promise<RunResult> {
   mainRunCount++;
   if (threadId) runningKeys.set(threadId, (runningKeys.get(threadId) ?? 0) + 1);
@@ -1095,7 +1141,12 @@ async function execClaude(
     model: fallback?.model ?? "",
     api: fallback?.api ?? "",
   };
-  const securityArgs = buildSecurityArgs(security);
+  // Callers may pass an explicit effort (jobs/heartbeat use their own config).
+  // When omitted, fall back to this session's persisted effort, keyed by thread
+  // (or the main session). Chat paths thus respect a thread's level even when the
+  // caller didn't look it up.
+  const resolvedEffort = effort !== undefined ? effort : getEffort(threadId ?? MAIN_EFFORT_KEY);
+  const securityArgs = buildSecurityArgs(security, resolvedEffort);
   const timeoutMs = timeoutMsOverride ?? resolveTimeoutMs(timeoutCategory ?? name);
 
   console.log(
@@ -1456,9 +1507,10 @@ export async function run(
   agentName?: string,
   timeoutCategory?: string,
   onChunk?: (text: string) => void,
-  onToolEvent?: (line: string) => void
+  onToolEvent?: (line: string) => void,
+  effort?: EffortLevel | null
 ): Promise<RunResult> {
-  return enqueue(() => execClaude(name, prompt, threadId, modelOverride, timeoutMs, agentName, timeoutCategory, onChunk, onToolEvent), threadId);
+  return enqueue(() => execClaude(name, prompt, threadId, modelOverride, timeoutMs, agentName, timeoutCategory, onChunk, onToolEvent, effort), threadId);
 }
 
 async function streamClaude(
@@ -1482,7 +1534,7 @@ async function streamClaude(
 
   const existing = await getSession();
   const { security, model, api } = getSettings();
-  const securityArgs = buildSecurityArgs(security);
+  const securityArgs = buildSecurityArgs(security, getEffort(MAIN_EFFORT_KEY));
 
   // Plugins: before_agent_start
   const streamPm = getPluginManager();

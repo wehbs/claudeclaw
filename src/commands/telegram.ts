@@ -1,9 +1,9 @@
-import { ensureProjectClaudeMd, run, runUserMessage, runFork, killActive, isMainBusy, isThreadBusy, compactCurrentSession, compactCurrentThreadSession, isRateLimited, getRateLimitResetAt, getPermissionMode, setPermissionMode, type PermissionMode } from "../runner";
+import { ensureProjectClaudeMd, run, runUserMessage, runFork, killActive, isMainBusy, isThreadBusy, compactCurrentSession, compactCurrentThreadSession, isRateLimited, getRateLimitResetAt, getPermissionMode, setPermissionMode, getEffort, setEffort, MAIN_EFFORT_KEY, type PermissionMode } from "../runner";
 import { wrapUntrusted } from "../prompt-safety";
 import { isAllowed } from "../allowlist";
 import { extractErrorDetail } from "../messaging";
 import { loadPendingResume } from "../pending-resume";
-import { getSettings, loadSettings } from "../config";
+import { getSettings, loadSettings, EFFORT_LEVELS, type EffortLevel } from "../config";
 import { transcribeAudioToText } from "../whisper";
 import { resetSession, resetFallbackSession, peekSession } from "../sessions";
 import { peekThreadSession, removeThreadSession } from "../sessionManager";
@@ -1004,6 +1004,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       `Session: \`${session.sessionId.slice(0, 8)}\``,
       `Turns: ${session.turnCount ?? 0}`,
       `Model: ${settings.model || "default"}`,
+      `Effort: ${getEffort(sessionKey ?? MAIN_EFFORT_KEY) ?? "default"}`,
       `Security: ${settings.security.level}`,
       `Created: ${session.createdAt}`,
       `Last used: ${session.lastUsedAt}`,
@@ -1192,6 +1193,45 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     return;
   }
 
+  if (command === "/effort") {
+    const effortKey = sessionKey ?? MAIN_EFFORT_KEY;
+    const arg = text.trim().slice("/effort".length).trim().toLowerCase();
+    if (!arg) {
+      const current = getEffort(effortKey);
+      await sendMessage(
+        config.token,
+        chatId,
+        [
+          `Current effort: **${current ?? "default"}**`,
+          "",
+          "Reasoning effort for this session only:",
+          `- ${EFFORT_LEVELS.map((l) => `/effort ${l}`).join("\n- ")}`,
+          "- /effort default - use the CLI default",
+        ].join("\n"),
+        threadId
+      );
+      return;
+    }
+
+    if (arg === "default" || arg === "reset") {
+      setEffort(effortKey, null);
+      console.log(`[Telegram] Effort reset to default for ${effortKey} by user ${userId ?? "unknown"}`);
+      await sendMessage(config.token, chatId, `Effort reset to **default**. Takes effect on the next message.`, threadId);
+      return;
+    }
+
+    if (!(EFFORT_LEVELS as string[]).includes(arg)) {
+      const safeArg = arg.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      await sendMessage(config.token, chatId, `Unknown effort: \`${safeArg}\`\n\nValid: ${EFFORT_LEVELS.join(", ")}, default`, threadId);
+      return;
+    }
+
+    setEffort(effortKey, arg as EffortLevel);
+    console.log(`[Telegram] Effort changed to ${arg} for ${effortKey} by user ${userId ?? "unknown"}`);
+    await sendMessage(config.token, chatId, `Effort set to **${arg}**. Takes effect on the next message.`, threadId);
+    return;
+  }
+
   // Secretary: detect reply to a bot alert message → treat as custom reply
   const replyToMsgId = message.reply_to_message?.message_id;
   if (replyToMsgId && text && botId && message.reply_to_message?.from?.id === botId) {
@@ -1274,7 +1314,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
     // Skill routing: resolve slash commands to SKILL.md prompts
     let skillContext: string | null = null;
-    if (command && command !== "/start" && command !== "/reset" && command !== "/compact" && command !== "/status" && command !== "/context" && command !== "/kill" && command !== "/verbose" && command !== "/fork" && command !== "/mode") {
+    if (command && command !== "/start" && command !== "/reset" && command !== "/compact" && command !== "/status" && command !== "/context" && command !== "/kill" && command !== "/verbose" && command !== "/fork" && command !== "/mode" && command !== "/effort") {
       try {
         skillContext = await resolveSkillPrompt(command);
         if (skillContext) {
@@ -1595,6 +1635,7 @@ async function registerBotCommands(token: string): Promise<void> {
       { command: "modeldefault", description: "🔄 Reset to config default model" },
       // Mode toggles
       { command: "mode", description: "🔐 Get or set Claude permission mode" },
+      { command: "effort", description: "🎚️ Get or set reasoning effort" },
       { command: "verbose", description: "🔧 Toggle tool call display" },
       // Control
       { command: "fork", description: "🍴 Run parallel task" },
@@ -1630,7 +1671,7 @@ async function registerBotCommands(token: string): Promise<void> {
     } catch (regErr) {
       // Skill-generated commands may violate Telegram constraints; retry with built-in commands only
       console.warn(`[Telegram] Full command registration failed, retrying with built-in commands only: ${regErr instanceof Error ? regErr.message : regErr}`);
-      const builtinOnly = commands.filter((c) => ["start", "reset", "compact", "status", "context", "kill", "verbose", "fork", "mode", "model", "modelhaiku", "modelsonnet", "modelopus", "modeldefault"].includes(c.command));
+      const builtinOnly = commands.filter((c) => ["start", "reset", "compact", "status", "context", "kill", "verbose", "fork", "mode", "effort", "model", "modelhaiku", "modelsonnet", "modelopus", "modeldefault"].includes(c.command));
       await callApi(token, "setMyCommands", { commands: builtinOnly });
       console.log(`  Commands registered (built-in only): ${builtinOnly.length}`);
     }
