@@ -286,6 +286,45 @@ function buildProgressBar(current: number, max: number, width: number = 20): str
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
+/** Max usable context window (tokens) we measure usage against. */
+const MAX_CONTEXT_TOKENS = 200000;
+
+interface ContextUsage {
+  /** input + cache creation + cache read from the latest turn — i.e. current context size. */
+  totalContext: number;
+  input: number;
+  cacheCreation: number;
+  cacheRead: number;
+  /** Cumulative output tokens across all turns. */
+  totalOutput: number;
+}
+
+/**
+ * Read the latest context-window usage for a session from its JSONL transcript.
+ * Returns null if the file or usage data is missing.
+ */
+async function readContextUsage(sessionId: string): Promise<ContextUsage | null> {
+  const home = homedir();
+  const projectSlug = process.cwd().replace(/\//g, "-");
+  const jsonlPath = `${home}/.claude/projects/${projectSlug}/${sessionId}.jsonl`;
+  if (!existsSync(jsonlPath)) return null;
+  const raw = await readFile(jsonlPath, "utf8");
+  let lastUsage: any = null;
+  let totalOutput = 0;
+  for (const line of raw.trim().split("\n")) {
+    try {
+      const obj = JSON.parse(line);
+      if (obj.message?.usage) lastUsage = obj.message.usage;
+      if (obj.message?.usage?.output_tokens) totalOutput += obj.message.usage.output_tokens;
+    } catch {}
+  }
+  if (!lastUsage) return null;
+  const input = lastUsage.input_tokens ?? 0;
+  const cacheCreation = lastUsage.cache_creation_input_tokens ?? 0;
+  const cacheRead = lastUsage.cache_read_input_tokens ?? 0;
+  return { totalContext: input + cacheCreation + cacheRead, input, cacheCreation, cacheRead, totalOutput };
+}
+
 function extractTelegramCommand(text: string): string | null {
   const firstToken = text.trim().split(/\s+/, 1)[0];
   if (!firstToken.startsWith("/")) return null;
@@ -999,6 +1038,15 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       await sendMessage(config.token, chatId, "📊 No active session.", threadId);
       return;
     }
+    let contextLine = "Context: no usage data yet";
+    try {
+      const usage = await readContextUsage(session.sessionId);
+      if (usage) {
+        const left = Math.max(MAX_CONTEXT_TOKENS - usage.totalContext, 0);
+        const pct = ((usage.totalContext / MAX_CONTEXT_TOKENS) * 100).toFixed(1);
+        contextLine = `Context: \`${usage.totalContext.toLocaleString()}\` / \`${MAX_CONTEXT_TOKENS.toLocaleString()}\` (${pct}%, \`${left.toLocaleString()}\` left)`;
+      }
+    } catch {}
     const lines = [
       "📊 **Session Status**",
       `Session: \`${session.sessionId.slice(0, 8)}\``,
@@ -1006,6 +1054,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       `Model: ${settings.model || "default"}`,
       `Effort: ${getEffort(sessionKey ?? MAIN_EFFORT_KEY) ?? "default"}`,
       `Security: ${settings.security.level}`,
+      contextLine,
       `Created: ${session.createdAt}`,
       `Last used: ${session.lastUsedAt}`,
       `Compact warned: ${(session as any).compactWarned ? "yes" : "no"}`,
@@ -1020,45 +1069,24 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       await sendMessage(config.token, chatId, "No active session.", threadId);
       return;
     }
-    const home = homedir();
-    const projectSlug = process.cwd().replace(/\//g, "-");
-    const jsonlPath = `${home}/.claude/projects/${projectSlug}/${session.sessionId}.jsonl`;
-    if (!existsSync(jsonlPath)) {
-      await sendMessage(config.token, chatId, "Conversation file not found.", threadId);
-      return;
-    }
     try {
-      const raw = await readFile(jsonlPath, "utf8");
-      const fileLines = raw.trim().split("\n");
-      let lastUsage: any = null;
-      let totalOutput = 0;
-      for (const line of fileLines) {
-        try {
-          const obj = JSON.parse(line);
-          if (obj.message?.usage) lastUsage = obj.message.usage;
-          if (obj.message?.usage?.output_tokens) totalOutput += obj.message.usage.output_tokens;
-        } catch {}
-      }
-      if (!lastUsage) {
+      const usage = await readContextUsage(session.sessionId);
+      if (!usage) {
         await sendMessage(config.token, chatId, "No usage data found.", threadId);
         return;
       }
-      const input = lastUsage.input_tokens ?? 0;
-      const cacheCreation = lastUsage.cache_creation_input_tokens ?? 0;
-      const cacheRead = lastUsage.cache_read_input_tokens ?? 0;
-      const totalContext = input + cacheCreation + cacheRead;
-      const maxContext = 200000;
-      const pct = ((totalContext / maxContext) * 100).toFixed(1);
-      const bar = buildProgressBar(totalContext, maxContext);
+      const left = Math.max(MAX_CONTEXT_TOKENS - usage.totalContext, 0);
+      const pct = ((usage.totalContext / MAX_CONTEXT_TOKENS) * 100).toFixed(1);
+      const bar = buildProgressBar(usage.totalContext, MAX_CONTEXT_TOKENS);
       const msg = [
         `📐 **Context Window**`,
         `${bar} ${pct}%`,
         ``,
-        `Total: \`${totalContext.toLocaleString()}\` / \`${maxContext.toLocaleString()}\` tokens`,
-        `├ Input: \`${input.toLocaleString()}\``,
-        `├ Cache creation: \`${cacheCreation.toLocaleString()}\``,
-        `├ Cache read: \`${cacheRead.toLocaleString()}\``,
-        `└ Output (cumulative): \`${totalOutput.toLocaleString()}\``,
+        `Total: \`${usage.totalContext.toLocaleString()}\` / \`${MAX_CONTEXT_TOKENS.toLocaleString()}\` tokens (\`${left.toLocaleString()}\` left)`,
+        `├ Input: \`${usage.input.toLocaleString()}\``,
+        `├ Cache creation: \`${usage.cacheCreation.toLocaleString()}\``,
+        `├ Cache read: \`${usage.cacheRead.toLocaleString()}\``,
+        `└ Output (cumulative): \`${usage.totalOutput.toLocaleString()}\``,
         ``,
         `Turns: ${session.turnCount ?? 0}`,
       ];
