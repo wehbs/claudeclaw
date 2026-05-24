@@ -1215,7 +1215,7 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
         const cacheCreation = lastUsage.cache_creation_input_tokens ?? 0;
         const cacheRead = lastUsage.cache_read_input_tokens ?? 0;
         const totalContext = input + cacheCreation + cacheRead;
-        const maxContext = 200000;
+        const maxContext = 1000000; // Opus 4.7 ships a 1M window.
         const pct = ((totalContext / maxContext) * 100).toFixed(1);
         const filled = Math.round((Math.min(totalContext / maxContext, 1)) * 20);
         const bar = "█".repeat(filled) + "░".repeat(20 - filled);

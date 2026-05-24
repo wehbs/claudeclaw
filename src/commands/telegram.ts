@@ -286,8 +286,8 @@ function buildProgressBar(current: number, max: number, width: number = 20): str
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Max usable context window (tokens) we measure usage against. */
-const MAX_CONTEXT_TOKENS = 200000;
+/** Max usable context window (tokens) we measure usage against. Opus 4.7 ships a 1M window. */
+const MAX_CONTEXT_TOKENS = 1000000;
 
 interface ContextUsage {
   /** input + cache creation + cache read from the latest turn — i.e. current context size. */
