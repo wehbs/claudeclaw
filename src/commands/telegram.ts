@@ -360,6 +360,14 @@ function extractTelegramCommand(text: string): string | null {
   return firstToken.split("@", 1)[0].toLowerCase();
 }
 
+/**
+ * Everything after the command token. Drops the whole first token including any
+ * `@botname` mention Telegram appends in groups (e.g. "/effort@bot high" -> "high").
+ */
+function commandArg(text: string): string {
+  return text.trim().split(/\s+/).slice(1).join(" ").trim();
+}
+
 async function callApi<T>(token: string, method: string, body?: Record<string, unknown>): Promise<T> {
   // Add 15s buffer on top of Telegram's own long-poll timeout (default 30s)
   const telegramTimeout = (body?.timeout as number | undefined) ?? 0;
@@ -1081,7 +1089,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
       `Session: \`${session.sessionId.slice(0, 8)}\``,
       `Turns: ${session.turnCount ?? 0}`,
       `Model: ${settings.model || "default"}`,
-      `Effort: ${getEffort(sessionKey ?? MAIN_EFFORT_KEY) ?? "default"}`,
+      `Effort: ${getEffort(sessionKey ?? MAIN_EFFORT_KEY) ?? "auto"}`,
       `Security: ${settings.security.level}`,
       contextLine,
       `Created: ${session.createdAt}`,
@@ -1208,7 +1216,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   }
 
   if (command === "/mode") {
-    const arg = text.trim().slice("/mode".length).trim().toLowerCase();
+    const arg = commandArg(text).toLowerCase();
     const modeMap: Record<string, PermissionMode> = {
       plan: "plan",
       edit: "acceptEdits",
@@ -1253,34 +1261,35 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   if (command === "/effort") {
     const effortKey = sessionKey ?? MAIN_EFFORT_KEY;
-    const arg = text.trim().slice("/effort".length).trim().toLowerCase();
+    const arg = commandArg(text).toLowerCase();
     if (!arg) {
       const current = getEffort(effortKey);
       await sendMessage(
         config.token,
         chatId,
         [
-          `Current effort: **${current ?? "default"}**`,
+          `Current effort: **${current ?? "auto"}**`,
           "",
           "Reasoning effort for this session only:",
           `- ${EFFORT_LEVELS.map((l) => `/effort ${l}`).join("\n- ")}`,
-          "- /effort default - use the CLI default",
+          "- /effort auto - let Claude Code decide (default)",
         ].join("\n"),
         threadId
       );
       return;
     }
 
-    if (arg === "default" || arg === "reset") {
+    // "auto" matches Claude Code's label for the unset/adaptive state — clears any override.
+    if (arg === "auto" || arg === "default" || arg === "reset") {
       setEffort(effortKey, null);
-      console.log(`[Telegram] Effort reset to default for ${effortKey} by user ${userId ?? "unknown"}`);
-      await sendMessage(config.token, chatId, `Effort reset to **default**. Takes effect on the next message.`, threadId);
+      console.log(`[Telegram] Effort reset to auto for ${effortKey} by user ${userId ?? "unknown"}`);
+      await sendMessage(config.token, chatId, `Effort set to **auto**. Takes effect on the next message.`, threadId);
       return;
     }
 
     if (!(EFFORT_LEVELS as string[]).includes(arg)) {
       const safeArg = arg.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      await sendMessage(config.token, chatId, `Unknown effort: \`${safeArg}\`\n\nValid: ${EFFORT_LEVELS.join(", ")}, default`, threadId);
+      await sendMessage(config.token, chatId, `Unknown effort: \`${safeArg}\`\n\nValid: ${EFFORT_LEVELS.join(", ")}, auto`, threadId);
       return;
     }
 
