@@ -1199,12 +1199,15 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
         const raw = await readFile(jsonlPath, "utf8");
         const fileLines = raw.trim().split("\n");
         let lastUsage: any = null;
+        let model: string | null = null;
         let totalOutput = 0;
         for (const line of fileLines) {
           try {
             const obj = JSON.parse(line);
             if (obj.message?.usage) lastUsage = obj.message.usage;
             if (obj.message?.usage?.output_tokens) totalOutput += obj.message.usage.output_tokens;
+            const m = obj.message?.model;
+            if (typeof m === "string" && m && m !== "<synthetic>") model = m;
           } catch {}
         }
         if (!lastUsage) {
@@ -1215,7 +1218,9 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
         const cacheCreation = lastUsage.cache_creation_input_tokens ?? 0;
         const cacheRead = lastUsage.cache_read_input_tokens ?? 0;
         const totalContext = input + cacheCreation + cacheRead;
-        const maxContext = 1000000; // Opus 4.7 ships a 1M window.
+        // Window depends on the model the session actually ran on; Opus 4.7 ships 1M.
+        const maxContext = model && model.toLowerCase().includes("opus-4-7") ? 1000000 : 200000;
+        const left = Math.max(maxContext - totalContext, 0);
         const pct = ((totalContext / maxContext) * 100).toFixed(1);
         const filled = Math.round((Math.min(totalContext / maxContext, 1)) * 20);
         const bar = "█".repeat(filled) + "░".repeat(20 - filled);
@@ -1223,12 +1228,13 @@ async function handleInteractionCreate(token: string, interaction: DiscordIntera
           `📐 **Context Window**`,
           `${bar} ${pct}%`,
           ``,
-          `Total: \`${totalContext.toLocaleString()}\` / \`${maxContext.toLocaleString()}\` tokens`,
+          `Total: \`${totalContext.toLocaleString()}\` / \`${maxContext.toLocaleString()}\` tokens (\`${left.toLocaleString()}\` left)`,
           `├ Input: \`${input.toLocaleString()}\``,
           `├ Cache creation: \`${cacheCreation.toLocaleString()}\``,
           `├ Cache read: \`${cacheRead.toLocaleString()}\``,
           `└ Output (cumulative): \`${totalOutput.toLocaleString()}\``,
           ``,
+          `Model: ${model ?? "unknown"}`,
           `Turns: ${(session as any).turnCount ?? 0}`,
         ];
         await respondToInteraction(interaction, { content: msg.join("\n") });

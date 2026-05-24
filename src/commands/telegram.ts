@@ -286,8 +286,20 @@ function buildProgressBar(current: number, max: number, width: number = 20): str
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Max usable context window (tokens) we measure usage against. Opus 4.7 ships a 1M window. */
-const MAX_CONTEXT_TOKENS = 1000000;
+/** Fallback context window when the session's model is unknown. */
+const DEFAULT_CONTEXT_TOKENS = 200000;
+
+/**
+ * Best-known context window (tokens) for a model id read from the transcript.
+ * Opus 4.7 ships a 1M window by default in Claude Code; older/other models are 200k
+ * unless they opt into a larger beta we can't detect from the transcript.
+ */
+function contextWindowForModel(model: string | null): number {
+  if (!model) return DEFAULT_CONTEXT_TOKENS;
+  const m = model.toLowerCase();
+  if (m.includes("opus-4-7")) return 1000000;
+  return DEFAULT_CONTEXT_TOKENS;
+}
 
 interface ContextUsage {
   /** input + cache creation + cache read from the latest turn — i.e. current context size. */
@@ -297,10 +309,15 @@ interface ContextUsage {
   cacheRead: number;
   /** Cumulative output tokens across all turns. */
   totalOutput: number;
+  /** Model id from the latest real assistant turn (null if none/synthetic). */
+  model: string | null;
+  /** Context window for `model`, used as the bar denominator. */
+  maxContext: number;
 }
 
 /**
  * Read the latest context-window usage for a session from its JSONL transcript.
+ * The window size is derived from the model the session actually ran on.
  * Returns null if the file or usage data is missing.
  */
 async function readContextUsage(sessionId: string): Promise<ContextUsage | null> {
@@ -310,19 +327,31 @@ async function readContextUsage(sessionId: string): Promise<ContextUsage | null>
   if (!existsSync(jsonlPath)) return null;
   const raw = await readFile(jsonlPath, "utf8");
   let lastUsage: any = null;
+  let model: string | null = null;
   let totalOutput = 0;
   for (const line of raw.trim().split("\n")) {
     try {
       const obj = JSON.parse(line);
       if (obj.message?.usage) lastUsage = obj.message.usage;
       if (obj.message?.usage?.output_tokens) totalOutput += obj.message.usage.output_tokens;
+      // Track the real model used; ignore "<synthetic>" placeholder turns.
+      const m = obj.message?.model;
+      if (typeof m === "string" && m && m !== "<synthetic>") model = m;
     } catch {}
   }
   if (!lastUsage) return null;
   const input = lastUsage.input_tokens ?? 0;
   const cacheCreation = lastUsage.cache_creation_input_tokens ?? 0;
   const cacheRead = lastUsage.cache_read_input_tokens ?? 0;
-  return { totalContext: input + cacheCreation + cacheRead, input, cacheCreation, cacheRead, totalOutput };
+  return {
+    totalContext: input + cacheCreation + cacheRead,
+    input,
+    cacheCreation,
+    cacheRead,
+    totalOutput,
+    model,
+    maxContext: contextWindowForModel(model),
+  };
 }
 
 function extractTelegramCommand(text: string): string | null {
@@ -1042,9 +1071,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     try {
       const usage = await readContextUsage(session.sessionId);
       if (usage) {
-        const left = Math.max(MAX_CONTEXT_TOKENS - usage.totalContext, 0);
-        const pct = ((usage.totalContext / MAX_CONTEXT_TOKENS) * 100).toFixed(1);
-        contextLine = `Context: \`${usage.totalContext.toLocaleString()}\` / \`${MAX_CONTEXT_TOKENS.toLocaleString()}\` (${pct}%, \`${left.toLocaleString()}\` left)`;
+        const left = Math.max(usage.maxContext - usage.totalContext, 0);
+        const pct = ((usage.totalContext / usage.maxContext) * 100).toFixed(1);
+        contextLine = `Context: \`${usage.totalContext.toLocaleString()}\` / \`${usage.maxContext.toLocaleString()}\` (${pct}%, \`${left.toLocaleString()}\` left)`;
       }
     } catch {}
     const lines = [
@@ -1075,19 +1104,20 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
         await sendMessage(config.token, chatId, "No usage data found.", threadId);
         return;
       }
-      const left = Math.max(MAX_CONTEXT_TOKENS - usage.totalContext, 0);
-      const pct = ((usage.totalContext / MAX_CONTEXT_TOKENS) * 100).toFixed(1);
-      const bar = buildProgressBar(usage.totalContext, MAX_CONTEXT_TOKENS);
+      const left = Math.max(usage.maxContext - usage.totalContext, 0);
+      const pct = ((usage.totalContext / usage.maxContext) * 100).toFixed(1);
+      const bar = buildProgressBar(usage.totalContext, usage.maxContext);
       const msg = [
         `📐 **Context Window**`,
         `${bar} ${pct}%`,
         ``,
-        `Total: \`${usage.totalContext.toLocaleString()}\` / \`${MAX_CONTEXT_TOKENS.toLocaleString()}\` tokens (\`${left.toLocaleString()}\` left)`,
+        `Total: \`${usage.totalContext.toLocaleString()}\` / \`${usage.maxContext.toLocaleString()}\` tokens (\`${left.toLocaleString()}\` left)`,
         `├ Input: \`${usage.input.toLocaleString()}\``,
         `├ Cache creation: \`${usage.cacheCreation.toLocaleString()}\``,
         `├ Cache read: \`${usage.cacheRead.toLocaleString()}\``,
         `└ Output (cumulative): \`${usage.totalOutput.toLocaleString()}\``,
         ``,
+        `Model: ${usage.model ?? "unknown"}`,
         `Turns: ${session.turnCount ?? 0}`,
       ];
       await sendMessage(config.token, chatId, msg.join("\n"), threadId);
