@@ -1270,7 +1270,7 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
         [
           `Current effort: **${current ?? "auto"}**`,
           "",
-          "Reasoning effort for this session only:",
+          "Reasoning effort for this chat/topic — saved, survives restarts and doesn't affect other topics:",
           `- ${EFFORT_LEVELS.map((l) => `/effort ${l}`).join("\n- ")}`,
           "- /effort auto - let Claude Code decide (default)",
         ].join("\n"),
