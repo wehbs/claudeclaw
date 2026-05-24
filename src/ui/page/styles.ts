@@ -550,6 +550,96 @@ export const pageStyles = String.raw`    :root {
       cursor: wait;
       transform: none;
     }
+    .quick-job-edit-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #8fa6c4;
+    }
+    .quick-job-edit-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: #070f1a;
+      border: 1px solid #ffffff14;
+      color: #e4eefb;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      color-scheme: dark;
+    }
+    .quick-job-edit-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .quick-job-edit-nextrun {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      color: #8fa6c4;
+    }
+    .quick-job-edit-row {
+      display: flex;
+      gap: 8px;
+    }
+    .quick-job-edit-col {
+      flex: 1;
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+    .quick-job-edit-prompt {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 96px;
+      padding: 8px;
+      border-radius: 8px;
+      background: #070f1a;
+      border: 1px solid #ffffff14;
+      color: #e4eefb;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      resize: vertical;
+    }
+    .quick-job-edit-prompt:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .quick-job-edit-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .quick-job-save {
+      height: 28px;
+      padding: 0 12px;
+      border: 1px solid #9be7ff55;
+      border-radius: 999px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #d3f1ff;
+      background: #12303d80;
+      cursor: pointer;
+      transition: background 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+    }
+    .quick-job-save:hover {
+      background: #16465a80;
+      border-color: #9be7ff80;
+      transform: translateY(-1px);
+    }
+    .quick-job-save:disabled {
+      opacity: 0.65;
+      cursor: wait;
+      transform: none;
+    }
+    .quick-job-edit-status {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      color: #a8f1ca;
+    }
     .quick-jobs-empty {
       padding: 8px 10px;
       border: 1px dashed #ffffff22;

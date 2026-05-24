@@ -41,6 +41,8 @@ export async function buildState(snapshot: WebSnapshot) {
       name: j.name,
       schedule: j.schedule,
       prompt: j.prompt,
+      model: j.model ?? "",
+      effort: j.effort ?? "",
     })),
     security: snapshot.settings.security,
     telegram: {

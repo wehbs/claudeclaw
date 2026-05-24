@@ -4,7 +4,7 @@ import { checkToken } from "./auth";
 import type { StartWebUiOptions, WebServerHandle } from "./types";
 import { buildState, buildTechnicalInfo, sanitizeSettings } from "./services/state";
 import { readHeartbeatSettings, updateHeartbeatSettings } from "./services/settings";
-import { createQuickJob, deleteJob } from "./services/jobs";
+import { createQuickJob, deleteJob, updateJobFields } from "./services/jobs";
 import { readLogs } from "./services/logs";
 import { listSessions, readSessionMessages, listAgents } from "./services/sessions";
 import { getSessionUsage } from "./services/usage";
@@ -170,6 +170,23 @@ export function startWebUi(opts: StartWebUiOptions): WebServerHandle {
           const result = await createQuickJob(body as { time?: unknown; prompt?: unknown });
           if (opts.onJobsChanged) await opts.onJobsChanged();
           return json({ ok: true, ...result });
+        } catch (err) {
+          return json({ ok: false, error: String(err) });
+        }
+      }
+
+      if (url.pathname === "/api/jobs/edit" && req.method === "POST") {
+        try {
+          const body = await req.json();
+          const payload = body as { name?: unknown; schedule?: unknown; model?: unknown; effort?: unknown; prompt?: unknown };
+          await updateJobFields(String(payload.name ?? ""), {
+            ...(typeof payload.schedule === "string" ? { schedule: payload.schedule } : {}),
+            ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+            ...(typeof payload.effort === "string" ? { effort: payload.effort } : {}),
+            ...(typeof payload.prompt === "string" ? { prompt: payload.prompt } : {}),
+          });
+          if (opts.onJobsChanged) await opts.onJobsChanged();
+          return json({ ok: true });
         } catch (err) {
           return json({ ok: false, error: String(err) });
         }

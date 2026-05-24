@@ -346,6 +346,31 @@ export const pageScript = String.raw`    // --- Token management (Task 1.1) ---
       });
     }
 
+    function jobModelOptions(current) {
+      var opts = [
+        { v: "", label: "default" },
+        { v: "opus", label: "opus" },
+        { v: "sonnet", label: "sonnet" },
+        { v: "haiku", label: "haiku" },
+      ];
+      var cur = String(current || "");
+      if (cur && !opts.some(function (o) { return o.v === cur; })) {
+        opts.push({ v: cur, label: cur });
+      }
+      return opts.map(function (o) {
+        return '<option value="' + escAttr(o.v) + '"' + (o.v === cur ? " selected" : "") + ">" + esc(o.label) + "</option>";
+      }).join("");
+    }
+
+    function jobEffortOptions(current) {
+      var levels = ["", "low", "medium", "high", "xhigh", "max"];
+      var cur = String(current || "");
+      return levels.map(function (l) {
+        var label = l === "" ? "auto" : l;
+        return '<option value="' + escAttr(l) + '"' + (l === cur ? " selected" : "") + ">" + esc(label) + "</option>";
+      }).join("");
+    }
+
     function renderJobsList(jobs) {
       if (!quickJobsList) return;
       const items = Array.isArray(jobs) ? jobs.slice() : [];
@@ -399,10 +424,25 @@ export const pageScript = String.raw`    // --- Token management (Task 1.1) ---
               "</button>" +
               (expanded ? (
                 '<div class="quick-job-item-details">' +
-                  '<div>Schedule: ' + esc(j.schedule || "--") + "</div>" +
-                  '<div>Next run: ' + esc(nextRunText) + "</div>" +
-                  '<div>Prompt:</div>' +
-                  '<pre class="quick-job-prompt-full">' + esc(String(j.prompt || "")) + "</pre>" +
+                  '<label class="quick-job-edit-label">Schedule (cron)</label>' +
+                  '<input class="quick-job-edit-input" type="text" data-job-field="schedule" value="' + escAttr(j.schedule || "") + '">' +
+                  '<div class="quick-job-edit-nextrun">Next run: ' + esc(nextRunText) + "</div>" +
+                  '<div class="quick-job-edit-row">' +
+                    '<div class="quick-job-edit-col">' +
+                      '<label class="quick-job-edit-label">Model</label>' +
+                      '<select class="quick-job-edit-input" data-job-field="model">' + jobModelOptions(j.model || "") + "</select>" +
+                    "</div>" +
+                    '<div class="quick-job-edit-col">' +
+                      '<label class="quick-job-edit-label">Effort</label>' +
+                      '<select class="quick-job-edit-input" data-job-field="effort">' + jobEffortOptions(j.effort || "") + "</select>" +
+                    "</div>" +
+                  "</div>" +
+                  '<label class="quick-job-edit-label">Prompt</label>' +
+                  '<textarea class="quick-job-edit-prompt" data-job-field="prompt">' + esc(String(j.prompt || "")) + "</textarea>" +
+                  '<div class="quick-job-edit-actions">' +
+                    '<button class="quick-job-save" type="button" data-save-job="' + escAttr(j.name || "") + '">Save changes</button>' +
+                    '<span class="quick-job-edit-status"></span>' +
+                  "</div>" +
                 "</div>"
               ) : (
                 ""
@@ -446,7 +486,9 @@ export const pageScript = String.raw`    // --- Token management (Task 1.1) ---
         if (expandedJobName && !lastRenderedJobs.some((job) => String(job.name || "") === expandedJobName)) {
           expandedJobName = "";
         }
-        renderJobsList(lastRenderedJobs);
+        // While a job is expanded it's an open edit form — skip the 1s rebuild so
+        // typing/focus/cursor aren't lost. It re-renders on collapse or after save.
+        if (!expandedJobName) renderJobsList(lastRenderedJobs);
         syncQuickViewForJobs(state.jobs);
         if (uptimeBubbleEl) {
           uptimeBubbleEl.innerHTML =
@@ -897,6 +939,51 @@ export const pageScript = String.raw`    // --- Token management (Task 1.1) ---
       } catch (err) {
         if (quickJobsStatus) quickJobsStatus.textContent = "Failed: " + String(err instanceof Error ? err.message : err);
       } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const button = target.closest("[data-save-job]");
+      if (!button || !(button instanceof HTMLButtonElement)) return;
+      const name = button.getAttribute("data-save-job") || "";
+      if (!name) return;
+      const details = button.closest(".quick-job-item-details");
+      if (!details) return;
+      const fieldValue = (field) => {
+        const el = details.querySelector('[data-job-field="' + field + '"]');
+        return el ? String(el.value || "") : "";
+      };
+      const statusEl = details.querySelector(".quick-job-edit-status");
+      const schedule = fieldValue("schedule").trim();
+      const prompt = fieldValue("prompt").trim();
+      if (!schedule || !prompt) {
+        if (statusEl) statusEl.textContent = "Schedule and prompt are required.";
+        return;
+      }
+      button.disabled = true;
+      if (statusEl) statusEl.textContent = "Saving...";
+      try {
+        const res = await fetch("/api/jobs/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name,
+            schedule: schedule,
+            model: fieldValue("model"),
+            effort: fieldValue("effort"),
+            prompt: prompt,
+          }),
+        });
+        const out = await res.json();
+        if (!out.ok) throw new Error(out.error || "save failed");
+        if (statusEl) statusEl.textContent = "Saved.";
+        expandedJobName = "";
+        await refreshState();
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Failed: " + String(err instanceof Error ? err.message : err);
         button.disabled = false;
       }
     });

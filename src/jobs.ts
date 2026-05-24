@@ -163,7 +163,7 @@ export async function loadJobs(): Promise<Job[]> {
   return jobs;
 }
 
-function resolveJobPath(jobName: string): string {
+export function resolveJobPath(jobName: string): string {
   const slash = jobName.indexOf("/");
   if (slash > 0 && slash < jobName.length - 1) {
     const agentName = jobName.slice(0, slash);
