@@ -107,6 +107,7 @@ interface TelegramMessage {
     offset: number;
     length: number;
   }>;
+  media_group_id?: string;
 }
 
 interface TelegramPhotoSize {
@@ -991,9 +992,49 @@ function getTelegramSessionKey(
   return `tg:${chatId}`;
 }
 
+// --- Album / media group buffering ---
+// Telegram delivers an album (multi-photo upload) as N separate Update messages,
+// each tagged with the same media_group_id and only the first carrying the caption.
+// We debounce by media_group_id so the whole album reaches Claude as one logical
+// user message with all photos attached.
+const MEDIA_GROUP_DEBOUNCE_MS = 1500;
+const pendingMediaGroups = new Map<
+  string,
+  { messages: TelegramMessage[]; timer: ReturnType<typeof setTimeout> }
+>();
+
+function bufferMediaGroup(message: TelegramMessage): void {
+  const id = message.media_group_id!;
+  const existing = pendingMediaGroups.get(id);
+  const messages = existing ? existing.messages : [];
+  if (existing) clearTimeout(existing.timer);
+  messages.push(message);
+  const timer = setTimeout(() => {
+    pendingMediaGroups.delete(id);
+    const sorted = [...messages].sort((a, b) => a.message_id - b.message_id);
+    const [lead, ...rest] = sorted;
+    if (!lead) return;
+    handleMessage(lead, rest).catch((err) =>
+      console.error(`[Telegram] Media group ${id} unhandled: ${err}`)
+    );
+  }, MEDIA_GROUP_DEBOUNCE_MS);
+  pendingMediaGroups.set(id, { messages, timer });
+}
+
 // --- Message handler ---
 
-async function handleMessage(message: TelegramMessage): Promise<void> {
+async function handleMessage(
+  message: TelegramMessage,
+  groupExtras?: TelegramMessage[]
+): Promise<void> {
+  // Album buffering. If this message is part of a Telegram media group and we
+  // haven't been called from the buffer flush (groupExtras undefined), enqueue
+  // and let the debounce handler process the whole album as one message.
+  if (message.media_group_id && groupExtras === undefined) {
+    bufferMediaGroup(message);
+    return;
+  }
+  const allMessages = groupExtras && groupExtras.length > 0 ? [message, ...groupExtras] : [message];
   const config = getSettings().telegram;
   const userId = message.from?.id;
   const chatId = message.chat.id;
@@ -1002,7 +1043,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   const chatType = message.chat.type;
   const isPrivate = chatType === "private";
   const isGroup = chatType === "group" || chatType === "supergroup";
-  const hasImage = Boolean((message.photo && message.photo.length > 0) || isImageDocument(message.document));
+  const hasImage = allMessages.some(
+    (m) => Boolean((m.photo && m.photo.length > 0) || isImageDocument(m.document))
+  );
   const hasVoice = Boolean(message.voice || message.audio || isAudioDocument(message.document));
   const hasDocument = Boolean(message.document && isDocumentAttachment(message.document));
   const sessionKey = getTelegramSessionKey(chatId, threadId, userId, isPrivate, config.dmIsolation);
@@ -1322,7 +1365,11 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   }
 
   const label = message.from?.username ?? String(userId ?? "unknown");
-  const mediaParts = [hasImage ? "image" : "", hasVoice ? "voice" : "", hasDocument ? "doc" : ""].filter(Boolean);
+  const imageCount = allMessages.filter(
+    (m) => Boolean((m.photo && m.photo.length > 0) || isImageDocument(m.document))
+  ).length;
+  const imageLabel = imageCount > 1 ? `image x${imageCount}` : imageCount === 1 ? "image" : "";
+  const mediaParts = [imageLabel, hasVoice ? "voice" : "", hasDocument ? "doc" : ""].filter(Boolean);
   const mediaSuffix = mediaParts.length > 0 ? ` [${mediaParts.join("+")}]` : "";
   console.log(
     `[${new Date().toLocaleTimeString()}] Telegram ${label}${mediaSuffix}: "${text.slice(0, 60)}${text.length > 60 ? "..." : ""}"`
@@ -1349,12 +1396,15 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   try {
     await sendTyping(config.token, chatId, threadId);
-    let imagePath: string | null = null;
+    const imagePaths: string[] = [];
     let voicePath: string | null = null;
     let voiceTranscript: string | null = null;
-    if (hasImage) {
+    for (const m of allMessages) {
+      const mHasImage = Boolean((m.photo && m.photo.length > 0) || isImageDocument(m.document));
+      if (!mHasImage) continue;
       try {
-        imagePath = await downloadImageFromMessage(config.token, message);
+        const p = await downloadImageFromMessage(config.token, m);
+        if (p) imagePaths.push(p);
       } catch (err) {
         console.error(`[Telegram] Failed to download image for ${label}: ${err instanceof Error ? err.message : err}`);
       }
@@ -1414,9 +1464,13 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     } else if (text.trim()) {
       promptParts.push(`Message: ${wrapUntrusted("user-message", text)}`);
     }
-    if (imagePath) {
-      promptParts.push(`Image path: ${imagePath}`);
+    if (imagePaths.length === 1) {
+      promptParts.push(`Image path: ${imagePaths[0]}`);
       promptParts.push("The user attached an image. Inspect this image file directly before answering.");
+    } else if (imagePaths.length > 1) {
+      promptParts.push("Image paths:");
+      for (const p of imagePaths) promptParts.push(`  - ${p}`);
+      promptParts.push(`The user attached ${imagePaths.length} images. Inspect each of them directly before answering.`);
     } else if (hasImage) {
       promptParts.push("The user attached an image, but downloading it failed. Respond and ask them to resend.");
     }
