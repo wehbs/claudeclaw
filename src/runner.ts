@@ -353,8 +353,11 @@ function buildChildEnv(baseEnv: Record<string, string>, model: string, api: stri
  * Values are read fresh from settings on every call, so hot-reload works
  * automatically: edit settings.json and the next subprocess picks it up.
  *
+ * A resolved value of 0 (or less) means NO timeout — the subprocess runs to
+ * completion and is never killed by the timer (see execClaude/runClaudeStream).
+ *
  * Category mapping:
- *   "telegram"  → settings.timeouts.telegram  (default 5 min)
+ *   "telegram"  → settings.timeouts.telegram  (default 0 = no timeout)
  *   "heartbeat" → settings.timeouts.heartbeat (default 15 min)
  *   "job"       → settings.timeouts.job       (default 30 min)
  *   anything else (bootstrap, trigger, chat…) → settings.timeouts.default (default 5 min)
@@ -437,8 +440,12 @@ async function runClaudeOnce(
 
   mainActiveProcs.add(proc);
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  // timeoutMs <= 0 means "no timeout": leave the promise pending forever so the
+  // race resolves only when the subprocess finishes. No timer is armed.
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(`Claude session timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    if (timeoutMs > 0) {
+      timeoutId = setTimeout(() => reject(new Error(`Claude session timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    }
   });
 
   try {
@@ -580,8 +587,12 @@ async function runClaudeStream(
   };
 
   let streamJsonTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  // timeoutMs <= 0 means "no timeout": leave the promise pending forever so the
+  // race resolves only when the subprocess finishes. No timer is armed.
   const timeoutPromise = new Promise<never>((_, reject) => {
-    streamJsonTimeoutId = setTimeout(() => reject(new Error(`Claude session timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    if (timeoutMs > 0) {
+      streamJsonTimeoutId = setTimeout(() => reject(new Error(`Claude session timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    }
   });
 
   try {

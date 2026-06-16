@@ -85,7 +85,7 @@ const DEFAULT_SETTINGS: Settings = {
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
   stt: { baseUrl: "", model: "" },
   sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
-  timeouts: { telegram: 5, heartbeat: 15, job: 30, default: 5 },
+  timeouts: { telegram: 0, heartbeat: 15, job: 30, default: 5 },
   watchdog: { maxConsecutiveTimeouts: null, maxRuntimeSeconds: null },
   session: { autoRotate: false, maxMessages: 50, maxAgeHours: 24, summaryPath: "" },
   plugins: {},
@@ -170,11 +170,15 @@ export interface SecurityConfig {
 }
 
 export interface TimeoutsConfig {
-  /** Max minutes for a telegram message subprocess. Default: 5 min. */
+  /**
+   * Max minutes for a subprocess before it is killed. For any category, `0`
+   * (or any value <= 0) means NO timeout — the subprocess runs to completion.
+   */
+  /** Max minutes for a telegram message subprocess. Default: 0 (no timeout) — interactive, user-observed, /stop cancels. */
   telegram: number;
-  /** Max minutes for a heartbeat subprocess. Default: 15 min. */
+  /** Max minutes for a heartbeat subprocess. Default: 15 min. Unattended, so kept bounded. */
   heartbeat: number;
-  /** Max minutes for a scheduled job subprocess. Default: 30 min. */
+  /** Max minutes for a scheduled job subprocess. Default: 30 min. Unattended, so kept bounded. */
   job: number;
   /** Max minutes for all other subprocesses (bootstrap, trigger, etc). Default: 5 min. */
   default: number;
@@ -420,10 +424,11 @@ function parseSettings(
       ? raw.sessionTimeoutMs
       : DEFAULT_SESSION_TIMEOUT_MS,
     timeouts: {
-      telegram: Number.isFinite(raw.timeouts?.telegram) && Number(raw.timeouts.telegram) > 0 ? Number(raw.timeouts.telegram) : 5,
-      heartbeat: Number.isFinite(raw.timeouts?.heartbeat) && Number(raw.timeouts.heartbeat) > 0 ? Number(raw.timeouts.heartbeat) : 15,
-      job: Number.isFinite(raw.timeouts?.job) && Number(raw.timeouts.job) > 0 ? Number(raw.timeouts.job) : 30,
-      default: Number.isFinite(raw.timeouts?.default) && Number(raw.timeouts.default) > 0 ? Number(raw.timeouts.default) : 5,
+      // `>= 0` so an explicit 0 (no timeout) is preserved; negative/NaN/missing falls back to the default.
+      telegram: Number.isFinite(raw.timeouts?.telegram) && Number(raw.timeouts.telegram) >= 0 ? Number(raw.timeouts.telegram) : 0,
+      heartbeat: Number.isFinite(raw.timeouts?.heartbeat) && Number(raw.timeouts.heartbeat) >= 0 ? Number(raw.timeouts.heartbeat) : 15,
+      job: Number.isFinite(raw.timeouts?.job) && Number(raw.timeouts.job) >= 0 ? Number(raw.timeouts.job) : 30,
+      default: Number.isFinite(raw.timeouts?.default) && Number(raw.timeouts.default) >= 0 ? Number(raw.timeouts.default) : 5,
     },
     watchdog: parseWatchdogConfig(raw.watchdog),
     plugins: parsePlugins(raw.plugins),
