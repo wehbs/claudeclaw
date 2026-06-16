@@ -1989,7 +1989,7 @@ async function poll(generation: number): Promise<void> {
 // --- Exports ---
 
 /** Send a message to a specific chat (used by heartbeat forwarding) */
-export { sendMessage };
+export { sendMessage, isMethodNotFound, callRichApi, sendRichMessage };
 
 process.on("SIGTERM", () => { running = false; });
 process.on("SIGINT", () => { running = false; });
