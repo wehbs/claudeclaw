@@ -385,8 +385,94 @@ async function callApi<T>(token: string, method: string, body?: Record<string, u
   return (await res.json()) as T;
 }
 
+// --- Telegram Bot API 10.1 rich messages (server-side markdown rendering) ---
+
+/** Bot API 10.1 `rich_message` hard limit on the raw markdown payload, in UTF-8 chars. */
+const RICH_MESSAGE_MAX_CHARS = 32768;
+
+/**
+ * Session capability latches for rich messages. `null` = unknown (try it),
+ * `false` = the API server returned method-not-found, so skip rich for the rest
+ * of the session and go straight to HTML. We latch to `false` ONLY on a
+ * definitive method-not-found (HTTP 404), never on a transient/content error.
+ */
+let richSendSupported: boolean | null = null;
+let richEditSupported: boolean | null = null;
+
+/** True when richMessages is enabled in settings (default ON unless explicitly false). */
+function richMessagesEnabled(): boolean {
+  return getSettings().telegram.richMessages !== false;
+}
+
+/**
+ * Detect a DEFINITIVE "method not found" from a rich-message attempt. Telegram
+ * answers an unknown method with HTTP 404 + {"description":"Not Found: method
+ * not found"}. callApi throws "Telegram API <method>: 404 Not Found", and the
+ * dedicated rich fetch below also surfaces the description — match either.
+ */
+function isMethodNotFound(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b404\b/.test(msg) || /method not found/i.test(msg);
+}
+
+/**
+ * POST a rich message. Throws on any non-ok response; the error message includes
+ * the HTTP status and (when present) Telegram's JSON description so callers can
+ * distinguish method-not-found (latch off) from transient/content errors (retry).
+ */
+async function callRichApi(
+  token: string,
+  method: "sendRichMessage" | "editMessageText",
+  body: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  // Always parse the body: a not-yet-GA rich method can answer HTTP 200 with
+  // {ok:false, error_code, description} instead of a clean 404. Trusting the
+  // HTTP status alone would silently drop the message (no send, no fallback).
+  let json: { ok?: boolean; error_code?: number; description?: string } | undefined;
+  try {
+    json = (await res.json()) as typeof json;
+  } catch {
+    // body not JSON — status alone is enough
+  }
+  if (!res.ok || json?.ok === false) {
+    const code = json?.error_code ? ` ${json.error_code}` : "";
+    const description = json?.description ? ` ${json.description}` : "";
+    throw new Error(`Telegram API ${method}: ${res.status} ${res.statusText}${code}${description}`);
+  }
+}
+
+/** Send a single rich (server-rendered markdown) message. Caller handles fallback. */
+async function sendRichMessage(token: string, chatId: number, markdown: string, threadId?: number): Promise<void> {
+  await callRichApi(token, "sendRichMessage", {
+    chat_id: chatId,
+    ...(threadId ? { message_thread_id: threadId } : {}),
+    rich_message: { markdown },
+  });
+}
+
 async function sendMessage(token: string, chatId: number, text: string, threadId?: number): Promise<void> {
   const normalized = normalizeTelegramText(text).replace(/\[react:[^\]\r\n]+\]/gi, "");
+
+  // Rich path: server-side markdown rendering. Only when enabled, not latched
+  // off, and within the single-message char limit (rich markdown must NOT be
+  // chunked — splitting could break a table/code block).
+  if (richMessagesEnabled() && richSendSupported !== false && normalized.length <= RICH_MESSAGE_MAX_CHARS) {
+    try {
+      await sendRichMessage(token, chatId, normalized, threadId);
+      richSendSupported = true;
+      return;
+    } catch (err) {
+      if (isMethodNotFound(err)) richSendSupported = false; // latch: skip rich for the session
+      // else transient/content error — fall through to HTML this once, retry rich next time
+    }
+  }
+
   const html = markdownToTelegramHtml(normalized);
   const MAX_LEN = 4096;
   for (let i = 0; i < html.length; i += MAX_LEN) {
@@ -1577,8 +1663,10 @@ async function handleMessage(
           // all edits fail ("message is not modified") do NOT send a new message —
           // the user already sees the correct content and a sendMessage would duplicate.
           const finalText = cleanedText || "(empty response)";
-          const html = markdownToTelegramHtml(normalizeTelegramText(finalText));
-          await callApi(config.token, "editMessageText", {
+          const normalizedFinal = normalizeTelegramText(finalText);
+          const html = markdownToTelegramHtml(normalizedFinal);
+          // Existing HTML edit-in-place path, kept as the fallback tier.
+          const htmlEdit = () => callApi(config.token, "editMessageText", {
             chat_id: chatId, message_id: streamMsgId,
             text: html.slice(0, 4096), parse_mode: "HTML",
           }).catch(() => callApi(config.token, "editMessageText", {
@@ -1593,6 +1681,20 @@ async function handleMessage(
               return sendMessage(config.token, chatId, finalText, threadId);
             }
           }));
+          // Rich path: edit the placeholder into a server-rendered rich message,
+          // in place. Only when enabled, not latched off, and within the char
+          // limit (rich markdown must NOT be chunked). Any failure -> HTML tier.
+          if (richMessagesEnabled() && richEditSupported !== false && normalizedFinal.length <= RICH_MESSAGE_MAX_CHARS) {
+            await callRichApi(config.token, "editMessageText", {
+              chat_id: chatId, message_id: streamMsgId,
+              rich_message: { markdown: normalizedFinal },
+            }).then(() => { richEditSupported = true; }).catch((err) => {
+              if (isMethodNotFound(err)) richEditSupported = false; // latch off for the session
+              return htmlEdit();
+            });
+          } else {
+            await htmlEdit();
+          }
         }
       } else if (cleanedText) {
         await sendMessage(config.token, chatId, cleanedText, threadId);

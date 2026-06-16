@@ -78,7 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
     excludeWindows: [],
     forwardToTelegram: true,
   },
-  telegram: { token: "", allowedUserIds: [], listenChats: [], receiveEnabled: true, dmIsolation: "shared" },
+  telegram: { token: "", allowedUserIds: [], listenChats: [], receiveEnabled: true, dmIsolation: "shared", richMessages: true },
   discord: { token: "", allowedUserIds: [], listenChannels: [], listenGuilds: [], allowedGuilds: [], imageOutputRoots: [], streaming: false },
   slack: { botToken: "", appToken: "", allowedUserIds: [], listenChannels: [], allowBots: [], allowBotIds: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
@@ -135,6 +135,14 @@ export interface TelegramConfig {
    *  Supported values: tiny, base, small, medium, large-v3, large-v3-turbo (with or without .en suffix).
    *  Ignored when stt.baseUrl is configured. */
   whisperModel?: string;
+  /**
+   * When true (default), outgoing messages are sent via Telegram Bot API 10.1
+   * `sendRichMessage` so Claude's full markdown (headers, tables, nested lists,
+   * task lists, blockquotes, code blocks, math, spoilers, dividers) renders
+   * server-side. Falls back to the limited HTML converter on any failure, and
+   * latches off for the session if the bot's API server returns method-not-found.
+   * ENABLED unless explicitly set to false. Default: true. */
+  richMessages?: boolean;
 }
 
 export interface DiscordConfig {
@@ -361,6 +369,7 @@ function parseSettings(
       listenChats: Array.isArray(raw.telegram?.listenChats) ? raw.telegram.listenChats.map(Number) : [],
       receiveEnabled: raw.telegram?.receiveEnabled !== false,
       dmIsolation: raw.telegram?.dmIsolation === "perUser" ? "perUser" : "shared",
+      richMessages: raw.telegram?.richMessages !== false,
       ...(typeof raw.telegram?.whisperModel === "string" && raw.telegram.whisperModel.trim()
         ? { whisperModel: raw.telegram.whisperModel.trim() }
         : {}),
