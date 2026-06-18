@@ -25,7 +25,12 @@ async function transcribeViaApi(
   log(`voice transcribe: using STT API url=${url} model=${model}`);
 
   const audioBytes = await readFile(inputPath);
-  const ext = extname(inputPath).toLowerCase().replace(".", "") || "ogg";
+  let ext = extname(inputPath).toLowerCase().replace(".", "") || "ogg";
+  // Telegram voice notes arrive as .oga (Opus in an Ogg container). Groq's STT
+  // accepts "ogg"/"opus" but NOT the "oga" extension, and it detects the type
+  // from the upload filename (not the MIME), so normalize it — same container,
+  // just a label the API recognizes. Without this every voice note 400s.
+  if (ext === "oga") ext = "ogg";
   const mimeMap: Record<string, string> = {
     ogg: "audio/ogg", oga: "audio/ogg", wav: "audio/wav",
     mp3: "audio/mpeg", m4a: "audio/mp4", webm: "audio/webm",
