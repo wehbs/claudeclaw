@@ -83,7 +83,7 @@ const DEFAULT_SETTINGS: Settings = {
   slack: { botToken: "", appToken: "", allowedUserIds: [], listenChannels: [], allowBots: [], allowBotIds: [] },
   security: { level: "moderate", allowedTools: [], disallowedTools: [] },
   web: { enabled: false, host: "127.0.0.1", port: 4632 },
-  stt: { baseUrl: "", model: "" },
+  stt: { baseUrl: "https://api.groq.com/openai", model: "whisper-large-v3", apiKey: "" },
   sessionTimeoutMs: DEFAULT_SESSION_TIMEOUT_MS,
   timeouts: { telegram: 0, heartbeat: 15, job: 30, default: 5 },
   watchdog: { maxConsecutiveTimeouts: null, maxRuntimeSeconds: null },
@@ -131,10 +131,6 @@ export interface TelegramConfig {
    * - "perUser": each DM user gets their own isolated session.
    */
   dmIsolation: "shared" | "perUser";
-  /** Local whisper.cpp model for voice transcription. Default: "base.en".
-   *  Supported values: tiny, base, small, medium, large-v3, large-v3-turbo (with or without .en suffix).
-   *  Ignored when stt.baseUrl is configured. */
-  whisperModel?: string;
   /**
    * When true (default), outgoing messages are sent via Telegram Bot API 10.1
    * `sendRichMessage` so Claude's full markdown (headers, tables, nested lists,
@@ -241,15 +237,17 @@ export interface WebConfig {
 }
 
 export interface SttConfig {
-  /** Base URL of an OpenAI-compatible STT API, e.g. "http://127.0.0.1:8000".
-   *  When set, claudeclaw routes voice transcription through this API instead
-   *  of the bundled whisper.cpp binary. */
+  /** Base URL of an OpenAI-compatible STT API. Default: "https://api.groq.com/openai".
+   *  Voice transcription is API-only — audio is uploaded to `${baseUrl}/v1/audio/transcriptions`. */
   baseUrl: string;
-  /** Model name passed to the API (default: "Systran/faster-whisper-large-v3") */
+  /** Model name passed to the API. Default: "whisper-large-v3" (Groq). */
   model: string;
+  /** API key sent as `Authorization: Bearer <apiKey>`. For Groq, your gsk_... key.
+   *  Falls back to the GROQ_API_KEY env var. Without it, voice transcription is disabled. */
+  apiKey: string;
   /** MCP tool name or CLI command to delegate transcription to (e.g. "mcp__whisper__transcribe"
-   *  or "whisper"). When set, whisper is skipped and Claude is asked to call this tool directly
-   *  with the audio file path. When unset (default), whisper handles transcription. */
+   *  or "whisper"). When set, the built-in API transcription is skipped and Claude is asked to
+   *  call this tool directly with the audio file path. */
   delegateTool?: string;
 }
 
@@ -370,9 +368,6 @@ function parseSettings(
       receiveEnabled: raw.telegram?.receiveEnabled !== false,
       dmIsolation: raw.telegram?.dmIsolation === "perUser" ? "perUser" : "shared",
       richMessages: raw.telegram?.richMessages !== false,
-      ...(typeof raw.telegram?.whisperModel === "string" && raw.telegram.whisperModel.trim()
-        ? { whisperModel: raw.telegram.whisperModel.trim() }
-        : {}),
     },
     discord: {
       token: process.env.DISCORD_TOKEN?.trim() || (typeof raw.discord?.token === "string" ? raw.discord.token.trim() : ""),
@@ -425,6 +420,7 @@ function parseSettings(
     stt: {
       baseUrl: typeof raw.stt?.baseUrl === "string" ? raw.stt.baseUrl.trim() : "",
       model: typeof raw.stt?.model === "string" ? raw.stt.model.trim() : "",
+      apiKey: process.env.GROQ_API_KEY?.trim() || (typeof raw.stt?.apiKey === "string" ? raw.stt.apiKey.trim() : ""),
       ...(typeof raw.stt?.delegateTool === "string" && raw.stt.delegateTool.trim()
         ? { delegateTool: raw.stt.delegateTool.trim() }
         : {}),

@@ -1,4 +1,5 @@
-import { writeFile, unlink, mkdir } from "fs/promises";
+import { writeFile, readFile, unlink, mkdir } from "fs/promises";
+import { createInterface } from "readline/promises";
 import { extractErrorDetail } from "../messaging";
 import { join } from "path";
 import { fileURLToPath } from "url";
@@ -20,6 +21,41 @@ const HEARTBEAT_DIR = join(CLAUDE_DIR, "claudeclaw");
 const STATUSLINE_FILE = join(CLAUDE_DIR, "statusline.cjs");
 const CLAUDE_SETTINGS_FILE = join(CLAUDE_DIR, "settings.json");
 const PREFLIGHT_SCRIPT = fileURLToPath(new URL("../preflight.ts", import.meta.url));
+const CLAUDECLAW_SETTINGS_FILE = join(HEARTBEAT_DIR, "settings.json");
+
+// --- First-run Groq (voice transcription) API key prompt ---
+
+// Voice transcription is API-only (Groq Whisper). On first interactive startup,
+// if no key is configured (settings.stt.apiKey or GROQ_API_KEY env), ask for one
+// and persist it to settings.json. Non-interactive/background runs skip silently.
+async function ensureSttApiKey(settings: Settings): Promise<void> {
+  if (settings.stt.apiKey.trim() || process.env.GROQ_API_KEY?.trim()) return;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log("\nVoice transcription uses the Groq Whisper API.");
+    console.log("Get a key at https://console.groq.com/keys — or press Enter to skip (voice stays disabled).");
+    const answer = (await rl.question("Groq API key: ")).trim();
+    if (!answer) {
+      console.log("Skipped. Set stt.apiKey in settings.json or export GROQ_API_KEY to enable voice later.\n");
+      return;
+    }
+
+    let data: Record<string, any> = {};
+    try {
+      data = JSON.parse(await readFile(CLAUDECLAW_SETTINGS_FILE, "utf-8"));
+    } catch {
+      // settings.json missing/corrupt — initConfig should have created it, but tolerate either way.
+    }
+    data.stt = { ...(data.stt ?? {}), apiKey: answer };
+    await writeFile(CLAUDECLAW_SETTINGS_FILE, JSON.stringify(data, null, 2) + "\n");
+    settings.stt.apiKey = answer; // update the live (cached) settings so this run picks it up
+    console.log("Saved Groq API key to settings.\n");
+  } finally {
+    rl.close();
+  }
+}
 
 // --- Statusline setup/teardown ---
 
@@ -336,6 +372,7 @@ export async function start(args: string[] = []) {
 
   await initConfig();
   const settings = await loadSettings();
+  await ensureSttApiKey(settings);
   await ensureProjectClaudeMd();
   const jobs = await loadJobs();
   const webEnabled = webFlag || webPortFlag !== null || settings.web.enabled;

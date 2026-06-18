@@ -14,9 +14,9 @@ Parse `$ARGUMENTS` to identify what the user wants. If no arguments are given, s
 2. Display all settings clearly:
 
    **General**
-   - Model: (e.g. `opus`, `sonnet`, `haiku`, `glm` or "default")
-   - API token: (first 5 chars + "..." or "not configured"; used when `model` is `glm`)
-   - Fallback model: (e.g. `glm`, `sonnet`, or "not configured")
+   - Model: (e.g. `opus`, `sonnet`, `haiku`, or "default")
+   - API token: (first 5 chars + "..." or "not configured"; optional ANTHROPIC_AUTH_TOKEN override)
+   - Fallback model: (e.g. `sonnet`, `haiku`, or "not configured")
    - Fallback API token: (first 5 chars + "..." or "not configured")
    - Timezone: (e.g. `America/New_York` or "UTC")
 
@@ -117,19 +117,17 @@ Disable Telegram integration.
 Set the Claude model to use for sessions.
 
 1. If model name is in `$ARGUMENTS`, use it directly.
-2. Otherwise, use **AskUserQuestion**: "Which Claude model should ClaudeClaw use?" (header: "Model", options: "opus (default)", "sonnet", "haiku", "glm")
+2. Otherwise, use **AskUserQuestion**: "Which Claude model should ClaudeClaw use?" (header: "Model", options: "opus (default)", "sonnet", "haiku")
 3. Read `.claude/claudeclaw/settings.json`.
 4. Set `model` to the new value.
-5. If the selected model is `glm`, ask for `api` token (unless already set) and save it to top-level `api`.
-6. If model is changed away from `glm`, keep `api` unchanged.
-7. Write and confirm.
+5. Write and confirm.
 
 ### `api <token>` / `api`
 
-Set or update the API token used when `model` is `glm`.
+Set or update the optional ANTHROPIC_AUTH_TOKEN override (top-level `api`).
 
 1. If token is in `$ARGUMENTS`, use it directly.
-2. Otherwise, use **AskUserQuestion**: "What API token should ClaudeClaw use for glm?" (header: "API token", options: let user type via Other)
+2. Otherwise, use **AskUserQuestion**: "What API token should ClaudeClaw use? (optional ANTHROPIC_AUTH_TOKEN override)" (header: "API token", options: let user type via Other)
 3. Read `.claude/claudeclaw/settings.json`.
 4. Set top-level `api` to the new value.
 5. Write and confirm.
@@ -139,7 +137,7 @@ Set or update the API token used when `model` is `glm`.
 Set the fallback model used when the primary model hits a rate limit.
 
 1. If fallback model name is in `$ARGUMENTS`, use it directly.
-2. Otherwise, use **AskUserQuestion**: "Which fallback model should ClaudeClaw use?" (header: "Fallback model", options: "glm (Recommended)", "sonnet", "haiku")
+2. Otherwise, use **AskUserQuestion**: "Which fallback model should ClaudeClaw use?" (header: "Fallback model", options: "sonnet (Recommended)", "haiku")
 3. Read `.claude/claudeclaw/settings.json`.
 4. Set `fallback.model` to the chosen value (`""` for none).
 5. Write and confirm.
@@ -252,7 +250,7 @@ Location: `.claude/claudeclaw/settings.json`
   "model": "opus",
   "api": "",
   "fallback": {
-    "model": "glm",
+    "model": "opus",
     "api": ""
   },
   "timezone": "America/New_York",
@@ -285,9 +283,9 @@ Location: `.claude/claudeclaw/settings.json`
 
 | Key                        | Type       | Description                                    |
 |----------------------------|------------|------------------------------------------------|
-| `model`                    | string     | Claude model (`opus`, `sonnet`, `haiku`, `glm`, or full ID). Empty = default |
-| `api`                      | string     | API token used when model is `glm` (mapped to `ANTHROPIC_AUTH_TOKEN`) |
-| `fallback.model`           | string     | Backup model used automatically if primary run returns rate-limit text (recommend `glm` for provider diversity) |
+| `model`                    | string     | Claude model (`opus`, `sonnet`, `haiku`, or full ID). Empty = default |
+| `api`                      | string     | Optional API token mapped to `ANTHROPIC_AUTH_TOKEN` |
+| `fallback.model`           | string     | Backup model used automatically if primary run returns rate-limit text |
 | `fallback.api`             | string     | API token used with `fallback.model` (optional) |
 | `timezone`                 | string     | IANA timezone name (e.g. `America/New_York`)   |
 | `timezoneOffsetMinutes`    | number     | UTC offset in minutes (auto-resolved from timezone) |

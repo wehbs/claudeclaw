@@ -334,16 +334,10 @@ function isNotFoundError(error: unknown): boolean {
   return /enoent|no such file or directory/i.test(message);
 }
 
-function buildChildEnv(baseEnv: Record<string, string>, model: string, api: string): Record<string, string> {
+function buildChildEnv(baseEnv: Record<string, string>, _model: string, api: string): Record<string, string> {
   const childEnv: Record<string, string> = { ...baseEnv };
-  const normalizedModel = model.trim().toLowerCase();
 
   if (api.trim()) childEnv.ANTHROPIC_AUTH_TOKEN = api.trim();
-
-  if (normalizedModel === "glm") {
-    childEnv.ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic";
-    childEnv.API_TIMEOUT_MS = "3000000";
-  }
 
   return childEnv;
 }
@@ -428,8 +422,7 @@ async function runClaudeOnce(
   cwd?: string
 ): Promise<{ rawStdout: string; stderr: string; exitCode: number }> {
   const args = [...baseArgs];
-  const normalizedModel = model.trim().toLowerCase();
-  if (model.trim() && normalizedModel !== "glm") args.push("--model", model.trim());
+  if (model.trim()) args.push("--model", model.trim());
 
   const proc = Bun.spawn(args, {
     stdout: "pipe",
@@ -501,8 +494,7 @@ async function runClaudeStream(
   onToolEvent?: (line: string) => void
 ): Promise<{ rawStdout: string; stderr: string; exitCode: number; sessionId?: string }> {
   const args = [...baseArgs];
-  const normalizedModel = model.trim().toLowerCase();
-  if (model.trim() && normalizedModel !== "glm") args.push("--model", model.trim());
+  if (model.trim()) args.push("--model", model.trim());
 
   const proc = Bun.spawn(args, {
     stdout: "pipe",
@@ -658,8 +650,7 @@ async function runClaudeStreaming(
   onToolEvent?: (line: string) => void
 ): Promise<{ result: string; stderr: string; exitCode: number; sessionId?: string; isRateLimit: boolean }> {
   const args = [...baseArgs];
-  const normalizedModel = model.trim().toLowerCase();
-  if (model.trim() && normalizedModel !== "glm") args.push("--model", model.trim());
+  if (model.trim()) args.push("--model", model.trim());
 
   const proc = Bun.spawn(args, {
     stdout: "pipe",
@@ -1582,8 +1573,7 @@ async function streamClaude(
     args.push("--append-system-prompt", appendParts.join("\n\n"));
   }
 
-  const normalizedModel = model.trim().toLowerCase();
-  if (model.trim() && normalizedModel !== "glm") args.push("--model", model.trim());
+  if (model.trim()) args.push("--model", model.trim());
 
   const childEnv = buildChildEnv(cleanSpawnEnv(), model, api);
 
