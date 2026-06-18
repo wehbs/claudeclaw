@@ -9,7 +9,7 @@ import { parsePlugins, type PluginEntry } from "./plugins";
 export type WatchdogSettings = WatchdogConfig;
 
 const HEARTBEAT_DIR = join(process.cwd(), ".claude", "claudeclaw");
-const SETTINGS_FILE = join(HEARTBEAT_DIR, "settings.json");
+export const SETTINGS_FILE = join(HEARTBEAT_DIR, "settings.json");
 const DEFAULT_JOBS_DIR = join(HEARTBEAT_DIR, "jobs");
 const LOGS_DIR = join(HEARTBEAT_DIR, "logs");
 
@@ -281,6 +281,13 @@ const VALID_LEVELS = new Set<SecurityLevel>([
   "unrestricted",
 ]);
 
+// The "glm"/z.ai provider was removed. Treat any stored "glm" model value as
+// unset so upgrading installs fall back to the default Claude model instead of
+// spawning `claude --model glm`, which the CLI rejects.
+function stripRemovedModel(model: string): string {
+  return model.toLowerCase() === "glm" ? "" : model;
+}
+
 function parseAgenticMode(raw: any): AgenticMode | null {
   if (!raw || typeof raw !== "object") return null;
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
@@ -344,10 +351,10 @@ function parseSettings(
   const parsedTimezone = parseTimezone(raw.timezone);
 
   return {
-    model: typeof raw.model === "string" ? raw.model.trim() : "",
+    model: stripRemovedModel(typeof raw.model === "string" ? raw.model.trim() : ""),
     api: typeof raw.api === "string" ? raw.api.trim() : "",
     fallback: {
-      model: typeof raw.fallback?.model === "string" ? raw.fallback.model.trim() : "",
+      model: stripRemovedModel(typeof raw.fallback?.model === "string" ? raw.fallback.model.trim() : ""),
       api: typeof raw.fallback?.api === "string" ? raw.fallback.api.trim() : "",
     },
     agentic: parseAgenticConfig(raw.agentic),

@@ -8,7 +8,7 @@ import { writeState, type StateData } from "../statusline";
 import { cronMatches, nextCronMatch } from "../cron";
 import { clearJobSchedule, loadJobs, snapshotJobFrontmatter } from "../jobs";
 import { writePidFile, cleanupPidFile, checkExistingDaemon } from "../pid";
-import { initConfig, loadSettings, reloadSettings, resolvePrompt, type HeartbeatConfig, type Settings } from "../config";
+import { initConfig, loadSettings, reloadSettings, resolvePrompt, SETTINGS_FILE, type HeartbeatConfig, type Settings } from "../config";
 import { getDayAndMinuteAtOffset, buildClockPromptPrefix } from "../timezone";
 import { startWebUi, type WebServerHandle } from "../web";
 import { getOrCreateWebToken } from "../ui/auth";
@@ -21,7 +21,6 @@ const HEARTBEAT_DIR = join(CLAUDE_DIR, "claudeclaw");
 const STATUSLINE_FILE = join(CLAUDE_DIR, "statusline.cjs");
 const CLAUDE_SETTINGS_FILE = join(CLAUDE_DIR, "settings.json");
 const PREFLIGHT_SCRIPT = fileURLToPath(new URL("../preflight.ts", import.meta.url));
-const CLAUDECLAW_SETTINGS_FILE = join(HEARTBEAT_DIR, "settings.json");
 
 // --- First-run Groq (voice transcription) API key prompt ---
 
@@ -44,12 +43,12 @@ async function ensureSttApiKey(settings: Settings): Promise<void> {
 
     let data: Record<string, any> = {};
     try {
-      data = JSON.parse(await readFile(CLAUDECLAW_SETTINGS_FILE, "utf-8"));
+      data = JSON.parse(await readFile(SETTINGS_FILE, "utf-8"));
     } catch {
       // settings.json missing/corrupt — initConfig should have created it, but tolerate either way.
     }
     data.stt = { ...(data.stt ?? {}), apiKey: answer };
-    await writeFile(CLAUDECLAW_SETTINGS_FILE, JSON.stringify(data, null, 2) + "\n");
+    await writeFile(SETTINGS_FILE, JSON.stringify(data, null, 2) + "\n");
     settings.stt.apiKey = answer; // update the live (cached) settings so this run picks it up
     console.log("Saved Groq API key to settings.\n");
   } finally {
