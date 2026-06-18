@@ -1083,18 +1083,27 @@ function getTelegramSessionKey(
 // each tagged with the same media_group_id and only the first carrying the caption.
 // We debounce by media_group_id so the whole album reaches Claude as one logical
 // user message with all photos attached.
-const MEDIA_GROUP_DEBOUNCE_MS = 1500;
+// Quiet period after the LAST seen album member before flushing. Telegram delivers
+// album members as separate updates that can span multiple long-poll cycles, so the
+// timer resets on each arrival to coalesce the whole album into one logical message.
+const MEDIA_GROUP_DEBOUNCE_MS = 2500;
+// Hard ceiling from the FIRST member so a slow/large album still flushes eventually
+// instead of the debounce being reset indefinitely.
+const MEDIA_GROUP_MAX_WAIT_MS = 10000;
 const pendingMediaGroups = new Map<
   string,
-  { messages: TelegramMessage[]; timer: ReturnType<typeof setTimeout> }
+  { messages: TelegramMessage[]; timer: ReturnType<typeof setTimeout>; firstSeen: number }
 >();
 
 function bufferMediaGroup(message: TelegramMessage): void {
   const id = message.media_group_id!;
   const existing = pendingMediaGroups.get(id);
   const messages = existing ? existing.messages : [];
+  const firstSeen = existing ? existing.firstSeen : Date.now();
   if (existing) clearTimeout(existing.timer);
   messages.push(message);
+  // Debounce on the last arrival, but never wait past the hard ceiling from the first.
+  const wait = Math.max(0, Math.min(MEDIA_GROUP_DEBOUNCE_MS, MEDIA_GROUP_MAX_WAIT_MS - (Date.now() - firstSeen)));
   const timer = setTimeout(() => {
     pendingMediaGroups.delete(id);
     const sorted = [...messages].sort((a, b) => a.message_id - b.message_id);
@@ -1103,8 +1112,8 @@ function bufferMediaGroup(message: TelegramMessage): void {
     handleMessage(lead, rest).catch((err) =>
       console.error(`[Telegram] Media group ${id} unhandled: ${err}`)
     );
-  }, MEDIA_GROUP_DEBOUNCE_MS);
-  pendingMediaGroups.set(id, { messages, timer });
+  }, wait);
+  pendingMediaGroups.set(id, { messages, timer, firstSeen });
 }
 
 // --- Message handler ---
@@ -1554,9 +1563,9 @@ async function handleMessage(
       promptParts.push(`Image path: ${imagePaths[0]}`);
       promptParts.push("The user attached an image. Inspect this image file directly before answering.");
     } else if (imagePaths.length > 1) {
-      promptParts.push("Image paths:");
-      for (const p of imagePaths) promptParts.push(`  - ${p}`);
-      promptParts.push(`The user attached ${imagePaths.length} images. Inspect each of them directly before answering.`);
+      promptParts.push(`Image paths (${imagePaths.length} images attached):`);
+      imagePaths.forEach((p, i) => promptParts.push(`  ${i + 1}. ${p}`));
+      promptParts.push(`The user attached ${imagePaths.length} images in one message. You MUST inspect all ${imagePaths.length} image files directly (read every path above) before answering — do not stop after the first.`);
     } else if (hasImage) {
       promptParts.push("The user attached an image, but downloading it failed. Respond and ask them to resend.");
     }

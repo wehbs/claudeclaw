@@ -149,7 +149,7 @@ Text attachments sent to the Discord bot are now truncated at **2,048 bytes** (p
 See [docs/MULTI_SESSION.md](docs/MULTI_SESSION.md) for technical details.
 
 ### Reliability and Control
-- **GLM Fallback:** Automatically continue with GLM models if your primary limit is reached.
+- **Model Fallback:** Automatically continue with a configured fallback model if your primary limit is reached.
 - **Web Dashboard:** Manage jobs, monitor runs, and inspect logs in real time.
 - **Security Levels:** Four access levels from read-only to full system access.
 - **Model Selection:** Switch models based on your workload.
